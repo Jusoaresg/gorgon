@@ -14,6 +14,7 @@ import (
 	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
 	showAliasModel "github.com/jusoaresg/gorgon/internal/show_aliases/model"
 	showAliasRepository "github.com/jusoaresg/gorgon/internal/show_aliases/repository"
+	showSettingsRepository "github.com/jusoaresg/gorgon/internal/show_settings/repository"
 	"github.com/jusoaresg/gorgon/pkg/schemas/dtos"
 	"github.com/jusoaresg/gorgon/utils"
 
@@ -36,6 +37,7 @@ func NewShowManagerService(logger *slog.Logger, db *sqlx.DB) *ShowManagerService
 	showAliasRepo := showAliasRepository.NewShowAliasesRepository(db)
 	seasonRepo := seasonRepository.NewSeasonRepository(db)
 	episodeRepo := episodeRepository.NewEpisodeRepository(db)
+	settingsRepo := showSettingsRepository.NewShowSettingsRepository(db)
 
 	return &ShowManagerService{
 		ShowAggregator: *NewShowAggregatorService(
@@ -44,6 +46,7 @@ func NewShowManagerService(logger *slog.Logger, db *sqlx.DB) *ShowManagerService
 			episodeRepo,
 			episodeTorrentRepository.NewEpisodeTorrentRepository(db),
 			seasonRepo,
+			&settingsRepo,
 		),
 		ShowRepo:      showRepo,
 		ShowAliasRepo: &showAliasRepo,

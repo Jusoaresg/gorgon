@@ -15,6 +15,8 @@ import (
 	seasonRepository "github.com/jusoaresg/gorgon/internal/season/repository"
 	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
 	showAliasRepository "github.com/jusoaresg/gorgon/internal/show_aliases/repository"
+	showSettingsModel "github.com/jusoaresg/gorgon/internal/show_settings/model"
+	showSettingsRepository "github.com/jusoaresg/gorgon/internal/show_settings/repository"
 )
 
 type ShowAggregatorService struct {
@@ -23,6 +25,7 @@ type ShowAggregatorService struct {
 	EpisodeRepo        episodeRepository.EpisodeRepositoryInterface
 	EpisodeTorrentRepo episodeTorrentRepository.EpisodeTorrentRepositoryInterface
 	SeasonRepo         seasonRepository.SeasonRepositoryInterface
+	ShowSettingsRepo   showSettingsRepository.ShowSettingsRepositoryInterface
 }
 
 type AggregatedShow struct {
@@ -31,6 +34,7 @@ type AggregatedShow struct {
 	Seasons     []seasonModel.Season
 	Episodes    []episodeModel.Episode
 	Torrents    map[int64]episodeTorrentModel.EpisodeTorrent
+	Settings    showSettingsModel.ShowSettings
 }
 
 func NewShowAggregatorService(
@@ -39,6 +43,7 @@ func NewShowAggregatorService(
 	episodeRepo episodeRepository.EpisodeRepositoryInterface,
 	episodeTorrentRepo episodeTorrentRepository.EpisodeTorrentRepositoryInterface,
 	seasonRepo seasonRepository.SeasonRepositoryInterface,
+	showSettingsRepo showSettingsRepository.ShowSettingsRepositoryInterface,
 ) *ShowAggregatorService {
 	return &ShowAggregatorService{
 		ShowRepo:           showRepo,
@@ -46,17 +51,20 @@ func NewShowAggregatorService(
 		EpisodeRepo:        episodeRepo,
 		EpisodeTorrentRepo: episodeTorrentRepo,
 		SeasonRepo:         seasonRepo,
+		ShowSettingsRepo:   showSettingsRepo,
 	}
 }
 
 func NewShowAggregatorServiceWithDb(db *sqlx.DB) *ShowAggregatorService {
 	aliasRepo := showAliasRepository.NewShowAliasesRepository(db)
+	settingsRepo := showSettingsRepository.NewShowSettingsRepository(db)
 	return &ShowAggregatorService{
 		ShowRepo:           showRepository.NewShowRepository(db),
 		ShowAliasesRepo:    &aliasRepo,
 		EpisodeRepo:        episodeRepository.NewEpisodeRepository(db),
 		EpisodeTorrentRepo: episodeTorrentRepository.NewEpisodeTorrentRepository(db),
 		SeasonRepo:         seasonRepository.NewSeasonRepository(db),
+		ShowSettingsRepo:   &settingsRepo,
 	}
 }
 
@@ -106,12 +114,21 @@ func (s *ShowAggregatorService) GetShowWithRelationsByTvMazeId(tvMazeID int64) (
 		return AggregatedShow{}, fmt.Errorf("Failed to get episode torrents: %w", err)
 	}
 
+	var settings showSettingsModel.ShowSettings
+	if s.ShowSettingsRepo != nil {
+		settings, _ = s.ShowSettingsRepo.GetByShowID(show.ID)
+	}
+	if settings.ShowType == "" {
+		settings.ShowType = showSettingsModel.ShowTypeStandard
+	}
+
 	return AggregatedShow{
 		Show:        show,
 		ShowAliases: showAliases,
 		Seasons:     season,
 		Episodes:    episode,
 		Torrents:    torrents,
+		Settings:    settings,
 	}, nil
 }
 
@@ -142,12 +159,21 @@ func (s *ShowAggregatorService) GetShowWithRelationsById(id int64) (AggregatedSh
 		return AggregatedShow{}, fmt.Errorf("Failed to get episode torrents: %w", err)
 	}
 
+	var settings showSettingsModel.ShowSettings
+	if s.ShowSettingsRepo != nil {
+		settings, _ = s.ShowSettingsRepo.GetByShowID(show.ID)
+	}
+	if settings.ShowType == "" {
+		settings.ShowType = showSettingsModel.ShowTypeStandard
+	}
+
 	return AggregatedShow{
 		Show:        show,
 		ShowAliases: showAliases,
 		Seasons:     season,
 		Episodes:    episode,
 		Torrents:    torrents,
+		Settings:    settings,
 	}, nil
 }
 

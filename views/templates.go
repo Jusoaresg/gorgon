@@ -34,6 +34,12 @@ func NewTemplate() *Template {
 		"toLower": func(text string) string {
 			return strings.ToLower(text)
 		},
+		"extractYear": func(dateStr string) string {
+			if len(dateStr) >= 4 {
+				return dateStr[:4]
+			}
+			return dateStr
+		},
 		"render": func(name string, data any) (template.HTML, error) {
 			var buf bytes.Buffer
 			err := tmpl.ExecuteTemplate(&buf, name, data)
@@ -77,6 +83,24 @@ func NewTemplate() *Template {
 				return 0
 			}
 			return int((float64(part) / float64(total)) * 100)
+		},
+		"seasonDownloadedCount": func(seasonNumber int, episodes []episodeModel.Episode) int {
+			count := 0
+			for _, ep := range episodes {
+				if ep.Season == seasonNumber && ep.Tracking == episodeModel.TrackingDownloaded {
+					count++
+				}
+			}
+			return count
+		},
+		"seasonTotalCount": func(seasonNumber int, episodes []episodeModel.Episode) int {
+			count := 0
+			for _, ep := range episodes {
+				if ep.Season == seasonNumber {
+					count++
+				}
+			}
+			return count
 		},
 		"dict": func(values ...any) (map[string]any, error) {
 			if len(values)%2 != 0 {
