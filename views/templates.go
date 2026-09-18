@@ -117,6 +117,79 @@ func NewTemplate() *Template {
 			return dict, nil
 		},
 		"airDate": func(e model.Episode) string { return e.AirDate() },
+		"nextEpisodeLabel": func(episodes []episodeModel.Episode, status string) string {
+			if strings.EqualFold(status, "Ended") {
+				return "Ended"
+			}
+			now := time.Now().Unix()
+			var nextEp *episodeModel.Episode
+			var nextTime int64 = 1<<63 - 1
+
+			for i := range episodes {
+				if episodes[i].AirStamp > now && episodes[i].AirStamp < nextTime {
+					nextTime = episodes[i].AirStamp
+					nextEp = &episodes[i]
+				}
+			}
+
+			if nextEp != nil {
+				t := time.Unix(nextEp.AirStamp, 0)
+				days := int(time.Until(t).Hours() / 24)
+				if days == 0 {
+					return "Today"
+				} else if days == 1 {
+					return "Tomorrow"
+				} else if days < 7 {
+					return t.Format("Mon")
+				}
+				return t.Format("Jan 02")
+			}
+
+			return "TBD"
+		},
+		"nextEpisodeInfo": func(episodes []episodeModel.Episode, status string) string {
+			if strings.EqualFold(status, "Ended") {
+				return "Ended"
+			}
+			now := time.Now().Unix()
+			var nextEp *episodeModel.Episode
+			var nextTime int64 = 1<<63 - 1
+
+			for i := range episodes {
+				if episodes[i].AirStamp > now && episodes[i].AirStamp < nextTime {
+					nextTime = episodes[i].AirStamp
+					nextEp = &episodes[i]
+				}
+			}
+
+			if nextEp != nil {
+				t := time.Unix(nextEp.AirStamp, 0)
+				days := int(time.Until(t).Hours() / 24)
+				epCode := fmt.Sprintf("S%02dE%02d", nextEp.Season, nextEp.Number)
+				if days <= 0 {
+					return fmt.Sprintf("%s • Today", epCode)
+				} else if days == 1 {
+					return fmt.Sprintf("%s • Tomorrow", epCode)
+				} else if days < 7 {
+					return fmt.Sprintf("%s • %s", epCode, t.Format("Mon"))
+				}
+				return fmt.Sprintf("%s • %s", epCode, t.Format("Jan 02"))
+			}
+
+			return "TBD"
+		},
+		"primaryGenre": func(genresStr string, fallbackType string) string {
+			if genresStr != "" {
+				parts := strings.Split(genresStr, ",")
+				if len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
+					return strings.TrimSpace(parts[0])
+				}
+			}
+			if fallbackType != "" {
+				return fallbackType
+			}
+			return "Series"
+		},
 		"airTimeUnix": func(airstamp int64) string {
 			return time.Unix(airstamp, 0).UTC().Format("15:04")
 		},
