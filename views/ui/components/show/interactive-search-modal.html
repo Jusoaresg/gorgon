@@ -3,11 +3,11 @@
     <div class="modal-content modal-interactive" onclick="event.stopPropagation()">
         
         <div class="modal-header">
-            <div>
+            <div style="min-width: 0; flex: 1;">
                 <h3 class="modal-title">Interactive Search</h3>
                 <span class="modal-subtitle">{{ .EpisodeName }} (S{{ .Season }}E{{ .Number }})</span>
             </div>
-            <div style="display: flex; gap: 8px; align-items: center;">
+            <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;">
                 <button class="btn btn-sm btn-outline" 
                         id="search-again-btn"
                         hx-get="/front/episode/{{ .EpisodeID }}/search-results"
@@ -81,22 +81,41 @@
         padding: 12px 18px;
         background: rgba(139, 92, 246, 0.08);
         border-bottom: 1px solid var(--border-color);
+        gap: 12px;
+        min-width: 0;
     }
     .alias-results-header .alias-label {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         gap: 8px;
         font-size: 14px;
         font-weight: 700;
         color: var(--text-primary);
+        min-width: 0;
+        flex: 1;
+        line-height: 1.35;
+    }
+    .alias-results-header .alias-label .alias-text {
+        min-width: 0;
+        flex: 1;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        word-break: break-word;
     }
     .alias-results-header .alias-label svg {
         color: var(--accent-purple);
+        flex-shrink: 0;
+        margin-top: 2px;
     }
     .alias-header-badges {
         display: flex;
         align-items: center;
         gap: 8px;
+        flex-shrink: 0;
+        white-space: nowrap;
     }
     .alias-top-score-badge {
         display: inline-flex;
@@ -109,6 +128,8 @@
         border-radius: 999px;
         font-size: 11px;
         font-weight: 700;
+        white-space: nowrap;
+        flex-shrink: 0;
     }
     .alias-results-count {
         display: inline-flex;
@@ -120,6 +141,8 @@
         border-radius: 999px;
         font-size: 11px;
         font-weight: 600;
+        white-space: nowrap;
+        flex-shrink: 0;
     }
 
     .alias-results-list {
@@ -129,7 +152,7 @@
         padding: 14px;
     }
 
-    .alias-results-group .result-card {
+    .result-card {
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -141,31 +164,31 @@
         background: rgba(255, 255, 255, 0.02);
         gap: 16px;
     }
-    .alias-results-group .result-card:hover {
+    .result-card:hover {
         background: rgba(255, 255, 255, 0.04);
         border-color: rgba(255, 255, 255, 0.15);
         transform: translateY(-1px);
         box-shadow: 0 4px 10px rgba(0,0,0,0.15);
     }
-    .alias-results-group .result-card.card-passed {
+    .result-card.card-passed {
         border-left-color: #10b981;
     }
-    .alias-results-group .result-card.card-rejected {
+    .result-card.card-rejected {
         border-left-color: #ef4444;
         opacity: 0.75;
     }
-    .alias-results-group .result-card.card-rejected:hover {
+    .result-card.card-rejected:hover {
         opacity: 0.95;
     }
-    .alias-results-group .result-card.card-mismatch {
+    .result-card.card-mismatch {
         border-left-color: #6b7280;
         opacity: 0.6;
     }
-    .alias-results-group .result-card.card-mismatch:hover {
+    .result-card.card-mismatch:hover {
         opacity: 0.9;
     }
 
-    .alias-results-group .result-info {
+    .result-info {
         flex: 1;
         min-width: 0;
         display: flex;
@@ -222,7 +245,7 @@
         font-weight: 700;
     }
 
-    .alias-results-group .result-card .result-title {
+    .result-card .result-title {
         font-size: 13.5px;
         font-weight: 500;
         color: var(--text-primary);
@@ -230,7 +253,7 @@
         line-height: 1.35;
     }
 
-    .alias-results-group .result-card .result-meta {
+    .result-card .result-meta {
         display: flex;
         gap: 12px;
         font-size: 12px;
@@ -294,7 +317,8 @@
         align-items: center;
         flex-shrink: 0;
     }
-    .alias-results-group .no-results {
+    .alias-results-group .no-results,
+    .no-results {
         padding: 24px;
         text-align: center;
         color: var(--text-muted);
@@ -314,6 +338,91 @@
     }
     .download-btn.loading .btn-spinner { display: inline-block; }
     .download-btn.loading .btn-label { display: none; }
+
+    @media (max-width: 640px) {
+        .modal-content.modal-interactive {
+            width: 100%;
+            max-width: 100%;
+            border-radius: 12px;
+            margin: 0;
+        }
+        .modal-content.modal-interactive .modal-header {
+            padding: 0.85rem 1rem;
+            gap: 8px;
+        }
+        .modal-content.modal-interactive .modal-title {
+            font-size: 1.1rem;
+        }
+        .modal-content.modal-interactive .modal-subtitle {
+            font-size: 0.78rem;
+            word-break: break-word;
+        }
+        .search-modal-body {
+            padding: 0.75rem 0.6rem;
+            max-height: 78vh;
+        }
+        .alias-loading {
+            padding: 10px 12px;
+            font-size: 12px;
+            margin-bottom: 8px;
+        }
+        .alias-results-group {
+            margin-bottom: 12px;
+            border-radius: 10px;
+        }
+        .alias-results-header {
+            flex-direction: column;
+            align-items: flex-start;
+            padding: 10px 12px;
+            gap: 8px;
+        }
+        .alias-results-header .alias-label {
+            width: 100%;
+            font-size: 13px;
+        }
+        .alias-header-badges {
+            width: 100%;
+            justify-content: flex-start;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .alias-top-score-badge,
+        .alias-results-count {
+            font-size: 10.5px;
+            padding: 2px 8px;
+        }
+        .alias-results-list {
+            padding: 8px;
+            gap: 8px;
+        }
+        .result-card {
+            flex-direction: column;
+            align-items: stretch;
+            padding: 10px 12px;
+            gap: 10px;
+        }
+        .result-card .result-title {
+            font-size: 13px;
+        }
+        .result-card .result-meta {
+            gap: 6px 10px;
+            font-size: 11.5px;
+        }
+        .result-tags-row {
+            gap: 4px;
+        }
+        .result-actions {
+            width: 100%;
+            justify-content: flex-end;
+            padding-top: 8px;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            gap: 8px;
+        }
+        .result-actions .download-btn {
+            flex: 1;
+            justify-content: center;
+        }
+    }
 </style>
 
 <script>
@@ -428,9 +537,9 @@
 {{ define "search-alias-results" }}
 <div class="alias-results-group" data-top-score="{{ .TopScore }}" data-matches="{{ .MatchCount }}">
     <div class="alias-results-header">
-        <span class="alias-label">
+        <span class="alias-label" title="{{ .Alias }}">
             <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path></svg>
-            {{ .Alias }}
+            <span class="alias-text">{{ .Alias }}</span>
         </span>
         <div class="alias-header-badges">
             {{ if gt .TopScore 0 }}
