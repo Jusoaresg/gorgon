@@ -13,6 +13,9 @@
 
 .sidebar-header {
 	padding: 2rem 1.5rem 1.5rem;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
 }
 
 .brand-wrapper {
@@ -26,6 +29,7 @@
 	height: 36px;
 	color: var(--accent-purple);
 	filter: drop-shadow(0 0 8px rgba(139, 92, 246, 0.4));
+	flex-shrink: 0;
 }
 
 .brand-text h1 {
@@ -44,6 +48,10 @@
 	padding: 0.1rem 0.4rem;
 	border-radius: 4px;
 	letter-spacing: 0.5px;
+}
+
+.sidebar-close-btn {
+	display: none;
 }
 
 .sidebar-content {
@@ -114,6 +122,7 @@
 	width: 20px;
 	height: 20px;
 	transition: color 0.2s;
+	flex-shrink: 0;
 }
 
 .sidebar-menu a.active .sidebar-icon {
@@ -166,8 +175,6 @@
 	gap: 0.5rem;
 	font-size: 0.75rem;
 	color: var(--text-muted);
-	/* padding-top: 0.8rem; */
-	/* border-top: 1px solid rgba(255, 255, 255, 0.05); */
 }
 
 .system-status-dot {
@@ -181,31 +188,145 @@
 	box-shadow: 0 0 5px rgba(16, 185, 129, 0.4);
 }
 
-.mobile-menu-toggle {
+.mobile-topbar {
+	display: none;
+}
+
+.mobile-overlay {
 	display: none;
 }
 
 @media (max-width: 768px) {
-	.sidebar {
-		transform: translateX(-100%);
-		transition: transform 0.3s;
+	/* Mobile Top Navigation Header */
+	.mobile-topbar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		height: 56px;
+		padding: 0 1rem;
+		background: rgba(15, 10, 20, 0.92);
+		backdrop-filter: blur(12px);
+		-webkit-backdrop-filter: blur(12px);
+		border-bottom: 1px solid var(--border-color);
+		z-index: 200;
 	}
 
-	.sidebar.active {
-		transform: translateX(0);
+	.mobile-topbar-brand {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		text-decoration: none;
+	}
+
+	.mobile-topbar-brand .sidebar-logo {
+		width: 26px;
+		height: 26px;
+	}
+
+	.mobile-brand-title {
+		font-size: 1.15rem;
+		font-weight: 800;
+		letter-spacing: 0.05em;
+		color: var(--text-primary);
+		line-height: 1;
 	}
 
 	.mobile-menu-toggle {
-		display: block;
-		position: fixed;
-		top: 1.25rem;
-		right: 1.25rem;
-		z-index: 250;
-		background-color: var(--secondary-bg);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 40px;
+		height: 40px;
+		border-radius: 8px;
+		background: rgba(255, 255, 255, 0.04);
 		border: 1px solid var(--border-color);
 		color: var(--text-primary);
-		border-radius: 8px;
-		padding: 0.5rem;
 		cursor: pointer;
+		transition: all 0.2s ease;
+		padding: 0;
+	}
+
+	.mobile-menu-toggle:hover,
+	.mobile-menu-toggle:active {
+		background: var(--tertiary-bg);
+		border-color: var(--accent-purple);
+		color: var(--accent-purple-light);
+	}
+
+	/* Off-canvas Sidebar Drawer */
+	.sidebar {
+		position: fixed;
+		left: 0;
+		top: 0;
+		bottom: 0;
+		width: 265px;
+		max-width: 82vw;
+		height: 100vh;
+		height: 100dvh;
+		background: linear-gradient(180deg, var(--secondary-bg) 0%, #0f0a14 100%);
+		z-index: 300;
+		transform: translateX(-100%);
+		transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+		box-shadow: none;
+		border-right: 1px solid var(--border-color);
+	}
+
+	body.sidebar-open .sidebar,
+	.sidebar.active {
+		transform: translateX(0);
+		box-shadow: 10px 0 35px rgba(0, 0, 0, 0.7);
+	}
+
+	.sidebar-header {
+		padding: 1.25rem 1.25rem 1rem;
+	}
+
+	.sidebar-close-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 34px;
+		height: 34px;
+		border-radius: 6px;
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		color: var(--text-secondary);
+		cursor: pointer;
+		transition: all 0.2s ease;
+		padding: 0;
+	}
+
+	.sidebar-close-btn:hover,
+	.sidebar-close-btn:active {
+		color: var(--text-primary);
+		background: rgba(239, 68, 68, 0.15);
+		border-color: rgba(239, 68, 68, 0.3);
+	}
+
+	/* Backdrop Overlay */
+	.mobile-overlay {
+		display: block;
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.65);
+		backdrop-filter: blur(4px);
+		-webkit-backdrop-filter: blur(4px);
+		z-index: 250;
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 0.25s ease;
+	}
+
+	body.sidebar-open .mobile-overlay {
+		opacity: 1;
+		pointer-events: auto;
+	}
+
+	body.sidebar-open {
+		overflow: hidden;
 	}
 }

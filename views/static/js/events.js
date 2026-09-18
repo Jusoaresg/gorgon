@@ -353,10 +353,89 @@
         }
     });
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', connect);
-    } else {
+    function initSidebar() {
+        var toggleBtn = document.getElementById('mobile-menu-toggle');
+        var closeBtn = document.getElementById('sidebar-close-btn');
+        var overlay = document.getElementById('mobile-overlay');
+        var sidebar = document.getElementById('sidebar');
+
+        function openSidebar() {
+            document.body.classList.add('sidebar-open');
+            if (sidebar) sidebar.classList.add('active');
+            if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'true');
+        }
+
+        function closeSidebar() {
+            document.body.classList.remove('sidebar-open');
+            if (sidebar) sidebar.classList.remove('active');
+            if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'false');
+        }
+
+        function toggleSidebar(e) {
+            if (e) e.stopPropagation();
+            if (document.body.classList.contains('sidebar-open')) {
+                closeSidebar();
+            } else {
+                openSidebar();
+            }
+        }
+
+        if (toggleBtn) {
+            toggleBtn.addEventListener('click', toggleSidebar);
+        }
+
+        if (closeBtn) {
+            closeBtn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                closeSidebar();
+            });
+        }
+
+        if (overlay) {
+            overlay.addEventListener('click', function () {
+                closeSidebar();
+            });
+        }
+
+        // Close when clicking any menu link
+        document.querySelectorAll('.sidebar-menu a').forEach(function (link) {
+            link.addEventListener('click', function () {
+                closeSidebar();
+            });
+        });
+
+        // Close on Escape key
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && document.body.classList.contains('sidebar-open')) {
+                closeSidebar();
+            }
+        });
+
+        // Close on resize if viewport expands beyond mobile breakpoint
+        window.addEventListener('resize', function () {
+            if (window.innerWidth > 768 && document.body.classList.contains('sidebar-open')) {
+                closeSidebar();
+            }
+        });
+
+        // Close on HTMX history/navigation
+        document.body.addEventListener('htmx:historyRestore', closeSidebar);
+        document.body.addEventListener('htmx:afterSwap', function (e) {
+            if (e.detail && e.detail.target && e.detail.target.closest && e.detail.target.closest('.main-content')) {
+                closeSidebar();
+            }
+        });
+    }
+
+    function init() {
         connect();
+        initSidebar();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
     }
 
     window.showToast = showToast;

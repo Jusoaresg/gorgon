@@ -1,9 +1,22 @@
 {{ define "sidebar" }}
-<div class="mobile-menu-toggle">
-    <svg class="sidebar-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
-</div>
+<header class="mobile-topbar">
+    <div class="mobile-topbar-brand">
+        <div class="sidebar-logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
+            </svg>
+        </div>
+        <span class="mobile-brand-title">GORGON</span>
+        <span class="version-tag">v0.2.0</span>
+    </div>
+    <button type="button" class="mobile-menu-toggle" id="mobile-menu-toggle" aria-label="Toggle navigation menu" aria-expanded="false">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="22" height="22">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path>
+        </svg>
+    </button>
+</header>
 
-<nav class="sidebar">
+<nav class="sidebar" id="sidebar">
     <div class="sidebar-header">
         <div class="brand-wrapper">
             <div class="sidebar-logo">
@@ -16,6 +29,11 @@
                 <span class="version-tag">v0.2.0</span>
             </div>
         </div>
+        <button type="button" class="sidebar-close-btn" id="sidebar-close-btn" aria-label="Close menu">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="18" height="18">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+        </button>
     </div>
 
     <div class="sidebar-content">
@@ -73,5 +91,5 @@
     </div>
 </nav>
 
-<div class="mobile-overlay"></div>
+<div class="mobile-overlay" id="mobile-overlay"></div>
 {{ end }}
