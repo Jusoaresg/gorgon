@@ -37,10 +37,12 @@
 
     <div class="cal-grid">
         {{ range $day := $data.Days }}
-        <div class="cal-day-col">
+        <div class="cal-day-col{{ if eq $day.Date $data.Today }} cal-day-col-today{{ end }}">
             <div class="cal-day-header{{ if eq $day.Date $data.Today }} cal-day-today{{ end }}">
-                <span class="cal-day-name">{{ $day.DayName }}</span>
-                <span class="cal-day-date">{{ $day.DisplayDate }}</span>
+                <div class="cal-day-header-info">
+                    <span class="cal-day-name">{{ $day.DayName }}</span>
+                    <span class="cal-day-date">{{ $day.DisplayDate }}</span>
+                </div>
                 <span class="cal-day-count">{{ len $day.Episodes }}</span>
             </div>
             <div class="cal-day-eps">
@@ -52,14 +54,15 @@
                         </div>
                         <div class="cal-card-body">
                             <span class="cal-card-name" title="{{ $ep.ShowName }}">{{ $ep.ShowName }}</span>
-                            <span class="cal-card-meta">
-                                <span class="cal-card-ep">S{{ $ep.Season }}E{{ printf "%02d" $ep.Number }}</span>
-                                {{ if $ep.Name }}
-                                <span class="cal-card-title" title="{{ $ep.Name }}">{{ $ep.Name }}</span>
-                                {{ end }}
-                            </span>
+                            {{ if $ep.Name }}
+                            <span class="cal-card-title" title="{{ $ep.Name }}">{{ $ep.Name }}</span>
+                            {{ end }}
                             <div class="cal-card-footer">
-                                <span class="cal-card-airtime">{{ airTimeUnix $ep.AirStamp }}</span>
+                                <div class="cal-card-meta-inline">
+                                    <span class="cal-card-ep">S{{ $ep.Season }}E{{ printf "%02d" $ep.Number }}</span>
+                                    <span class="cal-card-dot">•</span>
+                                    <span class="cal-card-airtime">{{ airTimeUnix $ep.AirStamp }}</span>
+                                </div>
                                 <span class="cal-card-track {{ $ep.Tracking }}" data-episode-id="{{ $ep.ID }}"
                                       title="Change Status"
                                       hx-get="/front/episode/{{ $ep.ID }}/modal/tracking"

@@ -2,7 +2,7 @@
 	position: fixed;
 	left: 0;
 	top: 0;
-	width: 260px;
+	width: 235px;
 	height: 100vh;
 	background: linear-gradient(180deg, var(--secondary-bg) 0%, #0f0a14 100%);
 	border-right: 1px solid var(--border-color);
