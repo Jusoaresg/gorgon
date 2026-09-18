@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/url"
 	"strconv"
-	"time"
 
 	"github.com/jusoaresg/gorgon/config"
 	"github.com/jusoaresg/gorgon/external/prowlarr/schema"
@@ -42,7 +41,7 @@ type ProwlarrSearchService struct {
 }
 
 func NewProwlarrSearchService(logger *slog.Logger) (*ProwlarrSearchService, error) {
-	return newProwlarrSearchService(logger, rate.Every(2*time.Second), 1, 3)
+	return newProwlarrSearchService(logger, rate.Limit(5), 10, 5)
 }
 
 func NewInteractiveProwlarrSearchService(logger *slog.Logger) (*ProwlarrSearchService, error) {
