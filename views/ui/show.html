@@ -4,122 +4,148 @@
 {{ $seasons := .Data.Seasons }}
 {{ $episodes := .Data.Episodes }}
 {{ $aliases := .Data.ShowAliases }}
+{{ $settings := .Data.Settings }}
+{{ $downloadedCount := countDownloaded $episodes }}
+{{ $totalCount := len $episodes }}
+{{ $downloadedPct := calcPercentage $downloadedCount $totalCount }}
 
 <div class="show-details-container">
     <!-- Hero Section Refined -->
     <div class="show-hero">
-        <div class="hero-backdrop" style="background-image: url('{{ $show.ImageOriginal }} ');"></div>
+        <div class="hero-backdrop" style="background-image: url('{{ $show.ImageOriginal }}');"></div>
         <div class="hero-content">
-            <div class="hero-poster">
-                <img src="{{ $show.ImageOriginal }}" alt="Poster">
-                <div class="poster-status badge-{{ toLower $show.Status }}">{{ $show.Status }}</div>
+            <div class="hero-poster-column">
+                <div class="hero-poster">
+                    <img src="{{ if $show.ImageOriginal }}{{ $show.ImageOriginal }}{{ else }}{{ $show.ImageMedium }}{{ end }}"
+                        alt="{{ $show.Name }} Poster">
+                </div>
+                <div class="poster-footer-badges">
+                    <span class="poster-pill badge-status-{{ toLower $show.Status }}">
+                        <span class="status-dot"></span>
+                        {{ $show.Status }}
+                    </span>
+                    {{ if eq $settings.ShowType "anime" }}
+                    <span class="poster-pill badge-type-anime">⛩️ Anime</span>
+                    {{ else }}
+                    <span class="poster-pill badge-type-standard">📺 Series</span>
+                    {{ end }}
+                </div>
             </div>
+
             <div class="hero-info">
-                <div class="hero-header">
-                    <div>
-                        <h1>{{ $show.Name }}</h1>
-                        
-                        <!-- Alternative Titles (Aliases) -->
-                        {{ if $aliases }}
-                        <div class="alias-section">
-                            <span class="alias-label">Also known as</span>
-                            <div class="aliases-list">
-                                {{ range $aliases }}
-                                <span class="alias-tag">{{ .Alias }}</span>
-                                {{ end }}
-                            </div>
-                        </div>
+                <div class="hero-title-block">
+                    <h1 class="hero-title">{{ $show.Name }}</h1>
+
+                    <div class="hero-subline">
+                        {{ if $show.Premiered }}
+                        <span class="meta-text">{{ extractYear $show.Premiered }}</span>
                         {{ end }}
 
-                        <!-- Genres -->
-                        <div class="genres-list">
-                            <!-- Assuming genres is a comma separated string in DB based on model -->
-                            {{ .Data.Show.Genres }}
+                        {{ if $show.Language }}
+                        <span class="meta-dot">•</span>
+                        <span class="meta-text">{{ $show.Language }}</span>
+                        {{ end }}
+
+                        {{ if $show.Rating }}
+                        <span class="meta-dot">•</span>
+                        <span class="meta-rating">
+                            <svg class="rating-star-icon" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path>
+                            </svg>
+                            <strong>{{ printf "%.1f" (derefFloat $show.Rating) }}</strong>
+                        </span>
+                        {{ end }}
+
+                        <span class="meta-dot">•</span>
+                        <span class="meta-text">{{ len $seasons }} {{ if eq (len $seasons) 1 }}Season{{ else }}Seasons{{ end }}</span>
+
+                        <span class="tags-divider"></span>
+
+                        <div class="external-links">
+                            <a href="https://www.tvmaze.com/shows/{{ $show.TvMazeID }}" target="_blank" class="meta-ext-link" title="View on TVMaze">
+                                <img src="https://static.tvmaze.com/images/favico/favicon.ico" class="ext-favicon">
+                                <span>TVMaze</span>
+                            </a>
+
+                            {{ if $show.Imdb }}
+                            <a href="https://www.imdb.com/title/tt{{ printf "%07d" $show.Imdb }}" target="_blank" class="meta-ext-link" title="View on IMDb">
+                                <img src="https://m.media-amazon.com/images/G/01/imdb/images-ANDW73HA/favicon_desktop_32x32._CB1582158068_.png" class="ext-favicon">
+                                <span>IMDb</span>
+                            </a>
+                            {{ end }}
                         </div>
                     </div>
 
-                    <div class="hero-actions">
-                        <button 
-                            class="btn btn-outline" 
-                            title="Refresh Show"
-                            hx-trigger="click"
-                            hx-post="/api/v1/database/show/update-info"
-                            hx-swap="none"
-                            hx-vals='{"id": {{ $show.ID }} }'
-                            hx-on::after-request="showToast(event)"
-                            >
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-                        </button>
-                        <button class="btn btn-outline" title="Edit Show" hx-get="/front/show/{{ $show.ID }}/modal/edit" hx-target="body" hx-swap="beforeend">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
-                        </button>
-                        <button 
-                                class="btn btn-primary"
-                                title="Automatic Search" 
-                                hx-trigger="click"
-                                hx-post="/api/v1/database/show/episode/search/all"
-                                hx-vals='{"id": {{ $show.ID }}}'
-                                parse-types="true"
-                                hx-swap="none"
-                                hx-on::before-request="toast('Searching wanted episodes...', 'info')"
-                                hx-on::after-request="showToast(event)"
-                        >
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                            Search Wanted
-                        </button>
+                    <!-- Genres & Download Status Row -->
+                    <div class="hero-tags-row">
+                        <div class="genres-list">
+                            {{ $show.Genres }}
+                        </div>
+                        <span class="tags-divider"></span>
+                        <div class="show-download-pill {{ if and (gt $totalCount 0) (eq $downloadedCount $totalCount) }}pill-complete{{ end }}">
+                            <svg class="pill-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                            </svg>
+                            <span class="pill-title"><strong class="pill-number">{{ $downloadedCount }} / {{ $totalCount }}</strong> Downloaded</span>
+                            <span class="pill-badge">{{ $downloadedPct }}%</span>
+                        </div>
                     </div>
                 </div>
-                
-                <div class="hero-meta">
-                    <span class="meta-item">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg> 
-                        {{ $show.Language }}
-                    </span>
-                    <span class="meta-item">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2-2v12a2 2 0 002 2z"></path></svg> 
-                        {{ $show.Premiered }}
-                    </span>
-                    {{ if $show.Rating }}
-                    <span class="meta-item star-rating">
-                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path></svg>
-                        {{ printf "%.1f" (derefFloat $show.Rating) }}
-                    </span>
-                    {{ end }}
 
-                    <!-- External Links -->
-                    <span style="width: 1px; height: 1.2rem; background: rgba(255,255,255,0.1); margin: 0 0.5rem;"></span>
-                    
-                    <a href="https://www.tvmaze.com/shows/{{ $show.TvMazeID }}" target="_blank" class="meta-item" title="View on TVMaze">
-                        <img src="https://static.tvmaze.com/images/favico/favicon.ico" style="width: 14px; height: 14px; opacity: 0.8;">
-                        TVMaze
-                    </a>
+                <!-- Action Bar (Proposal 1) -->
+                <div class="hero-action-bar">
+                    <button class="btn-action-primary" title="Automatic Search for Wanted Episodes"
+                        hx-trigger="click" hx-post="/api/v1/database/show/episode/search/all"
+                        hx-vals='{"id": {{ $show.ID }}}' parse-types="true" hx-swap="none"
+                        hx-on::before-request="toast('Searching wanted episodes...', 'info')"
+                        hx-on::after-request="showToast(event)">
+                        <svg class="action-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                        </svg>
+                        <span>Search Wanted</span>
+                    </button>
 
-                    {{ if $show.Imdb }}
-                    <a href="https://www.imdb.com/title/tt{{ printf "%07d" $show.Imdb }}" target="_blank" class="meta-item" title="View on IMDb">
-                        <img src="https://m.media-amazon.com/images/G/01/imdb/images-ANDW73HA/favicon_desktop_32x32._CB1582158068_.png" style="width: 14px; height: 14px; opacity: 0.8;">
-                        IMDb
-                    </a>
-                    {{ end }}
+                    <button class="btn-action-secondary" title="Refresh Show" hx-trigger="click"
+                        hx-post="/api/v1/database/show/update-info" hx-swap="none" hx-vals='{"id": {{ $show.ID }} }'
+                        hx-on::after-request="showToast(event)">
+                        <svg class="action-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
+                            </path>
+                        </svg>
+                        <span>Refresh</span>
+                    </button>
+
+                    <button class="btn-action-secondary" title="Edit Show Settings"
+                        hx-get="/front/show/{{ $show.ID }}/modal/edit" hx-target="body" hx-swap="beforeend">
+                        <svg class="action-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z">
+                            </path>
+                        </svg>
+                        <span>Settings</span>
+                    </button>
                 </div>
 
-                <div class="show-stats">
-                    <div class="stat-box">
-                        <span class="stat-label">Episodes</span>
-                        <span class="stat-value">{{ len $episodes }}</span>
+                <!-- Alternative Titles (Aliases) -->
+                {{ if $aliases }}
+                <div class="alias-section">
+                    <span class="alias-label">Also known as:</span>
+                    <div class="aliases-list">
+                        {{ range $aliases }}
+                        <span class="alias-tag">{{ .Alias }}</span>
+                        {{ end }}
                     </div>
-                    <!-- <div class="stat-box"> -->
-                    <!--     <span class="stat-label">Size</span> -->
-                    <!--     <span class="stat-value">-- GB</span> -->
-                    <!-- </div> -->
-                    <!-- <div class="stat-box"> -->
-                    <!--     <span class="stat-label">Path</span> -->
-                    <!--     <span class="stat-value path-value">/data/media/tv/{{ $show.Name }}</span> -->
-                    <!-- </div> -->
                 </div>
+                {{ end }}
 
+                <!-- Synopsis -->
+                {{ if $show.Summary }}
                 <div class="show-synopsis js-summary">
                     {{ $show.Summary }}
                 </div>
+                {{ end }}
             </div>
         </div>
     </div>
@@ -127,26 +153,30 @@
     <!-- Seasons List (Vertical) -->
     <div class="seasons-list">
         {{ range $season := $seasons }}
-            {{ render "show-season-container" (dict 
-            "Season" $season
-            "Episodes" $.Data.Episodes
-            "Torrents" $.Data.Torrents) }}
+        {{ render "show-season-container" (dict
+        "Season" $season
+        "Episodes" $.Data.Episodes
+        "Torrents" $.Data.Torrents) }}
         {{ end }}
     </div>
 </div>
 
 <script>
     function toggleSeason(header) {
-        const container = header.parentElement;
-        container.classList.toggle('active');
+        const container = header.closest('.season-container');
+        if (container) {
+            container.classList.toggle('active');
+        }
     }
 
     function toggleEpisode(header) {
-        const card = header.parentElement;
-        card.classList.toggle('active');
+        const card = header.closest('.episode-card');
+        if (card) {
+            card.classList.toggle('active');
+        }
     }
 
-    document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener('DOMContentLoaded', function () {
         const seasons = document.querySelectorAll('.js-season');
         if (seasons.length > 0) {
             seasons[seasons.length - 1].classList.add('active');
@@ -170,10 +200,12 @@
                 const genres = genresRaw.split(',').map(g => g.trim());
                 genreContainer.innerHTML = '';
                 genres.forEach(genre => {
-                    const tag = document.createElement('span');
-                    tag.className = 'genre-tag';
-                    tag.innerText = genre;
-                    genreContainer.appendChild(tag);
+                    if (genre) {
+                        const tag = document.createElement('span');
+                        tag.className = 'genre-tag';
+                        tag.innerText = genre;
+                        genreContainer.appendChild(tag);
+                    }
                 });
             }
         }
