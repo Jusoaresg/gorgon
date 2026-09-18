@@ -28,18 +28,24 @@ func NewShowSettingsRepository(db *sqlx.DB) ShowSettingsRepository {
 
 func (s *ShowSettingsRepository) Upsert(settings model.ShowSettings) error {
 	now := time.Now().Unix()
+	showType := settings.ShowType
+	if showType == "" {
+		showType = model.ShowTypeStandard
+	}
 
 	_, err := s.db.Exec(`
-		INSERT INTO show_settings (show_id, filter_profile_id, use_aliases, only_latin, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO show_settings (show_id, filter_profile_id, show_type, use_aliases, only_latin, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(show_id) DO UPDATE SET
 			filter_profile_id = excluded.filter_profile_id,
+			show_type = excluded.show_type,
 			use_aliases = excluded.use_aliases,
 			only_latin = excluded.only_latin,
 			updated_at = excluded.updated_at
 	`,
 		settings.ShowID,
 		settings.FilterProfileID,
+		showType,
 		settings.UseAliases,
 		settings.OnlyLatin,
 		now,
@@ -52,6 +58,9 @@ func (s *ShowSettingsRepository) GetByShowID(showID int64) (model.ShowSettings, 
 	var settings model.ShowSettings
 	if err := s.db.Get(&settings, "SELECT * FROM show_settings WHERE show_id = ? LIMIT 1", showID); err != nil {
 		return model.ShowSettings{}, err
+	}
+	if settings.ShowType == "" {
+		settings.ShowType = model.ShowTypeStandard
 	}
 	return settings, nil
 }

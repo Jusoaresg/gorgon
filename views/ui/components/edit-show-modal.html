@@ -30,6 +30,15 @@
                     data-show-id="{{ .Show.ID }}"
                 >
                     <div class="modal-form-group">
+                        <label>Series Type</label>
+                        <select class="modal-select" name="show_type">
+                            <option value="standard" {{ if or (eq .Settings.ShowType "standard") (not .Settings.ShowType) }}selected{{ end }}>Standard (TV Show)</option>
+                            <option value="anime" {{ if eq .Settings.ShowType "anime" }}selected{{ end }}>Anime</option>
+                        </select>
+                        <small class="modal-input-help">Anime mode enables anime release numbering (- 01, S2 - 01) and anime indexer search patterns.</small>
+                    </div>
+
+                    <div class="modal-form-group">
                         <label>Filter Profile</label>
                         <select class="modal-select" name="filter_profile_id">
                             <option value="">Default profile</option>
@@ -62,8 +71,13 @@
                         <label>Search Patterns</label>
                         <div class="pattern-item-default">
                             <span class="pattern-tag">default</span>
+                            {{ if eq .Settings.ShowType "anime" }}
+                            <code>{alias} - {episode:00}</code>
+                            <small>Searched with anime-style episode numbers</small>
+                            {{ else }}
                             <code>{alias} S{season:00}E{episode:00}</code>
                             <small>Always searched first</small>
+                            {{ end }}
                         </div>
                         <div id="show-search-pattern-rows">
                             {{ range .SearchPatterns }}

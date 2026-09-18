@@ -55,9 +55,15 @@ func (h *Handler) UpdateShowSettings(c echo.Context) error {
 		return err
 	}
 
+	showType := request.ShowType
+	if showType == "" {
+		showType = showSettingsModel.ShowTypeStandard
+	}
+
 	err = h.ShowSettingsRepo.Upsert(showSettingsModel.ShowSettings{
 		ShowID:          id,
 		FilterProfileID: request.FilterProfileID,
+		ShowType:        showType,
 		UseAliases:      request.UseAliases,
 		OnlyLatin:       request.OnlyLatin,
 	})

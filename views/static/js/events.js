@@ -313,8 +313,11 @@
         if (!showId) return;
 
         var profileId = form.querySelector('[name=filter_profile_id]').value;
+        var showTypeEl = form.querySelector('[name=show_type]');
+        var showType = showTypeEl ? showTypeEl.value : 'standard';
         var payload = {
             filter_profile_id: profileId ? parseInt(profileId, 10) : null,
+            show_type: showType,
             use_aliases: form.querySelector('[name=use_aliases]').checked,
             only_latin: form.querySelector('[name=only_latin]').checked,
             search_patterns: collectShowSearchPatterns()
