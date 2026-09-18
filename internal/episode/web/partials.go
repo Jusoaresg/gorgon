@@ -1,12 +1,13 @@
 package web
 
 import (
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jusoaresg/gorgon/config"
@@ -15,7 +16,10 @@ import (
 	qbittorrentService "github.com/jusoaresg/gorgon/external/qbittorrent/service"
 	episodeEvents "github.com/jusoaresg/gorgon/internal/episode/events"
 	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
+	episodeService "github.com/jusoaresg/gorgon/internal/episode/service"
 	episodeTorrentModel "github.com/jusoaresg/gorgon/internal/episode_torrent/model"
+	"github.com/jusoaresg/gorgon/internal/filter"
+	filterService "github.com/jusoaresg/gorgon/internal/filter/service"
 	"github.com/jusoaresg/gorgon/pkg/schemas"
 	"github.com/jusoaresg/gorgon/utils"
 	"github.com/labstack/echo/v4"
@@ -138,10 +142,21 @@ func (h *Handler) SearchEpisodeResults(c echo.Context) error {
 	})
 }
 
+type EvaluatedResult struct {
+	prowlarrSchema.SearchResponse
+	EpisodeMatched  bool
+	PassedFilter    bool
+	Score           int
+	RejectionReason string
+	Metadata        filter.ReleaseMetadata
+}
+
 type searchAliasResultsData struct {
-	Alias     string
-	Results   []prowlarrSchema.SearchResponse
-	EpisodeID int64
+	Alias      string
+	Results    []EvaluatedResult
+	EpisodeID  int64
+	TopScore   int
+	MatchCount int
 }
 
 func (h *Handler) SearchAliasResult(c echo.Context) error {
@@ -163,14 +178,44 @@ func (h *Handler) SearchAliasResult(c echo.Context) error {
 
 	logger := config.GetLogger()
 
+	episode, err := h.EpisodeRepo.GetByID(epId)
+	if err != nil {
+		logger.Error("error fetching episode for search", slog.String("error", err.Error()))
+		return c.Render(http.StatusOK, "search-alias-results", searchAliasResultsData{
+			Alias:      title,
+			Results:    nil,
+			EpisodeID:  epId,
+			TopScore:   0,
+			MatchCount: 0,
+		})
+	}
+
+	show, err := h.ShowRepo.GetById(episode.ShowID)
+	if err != nil {
+		logger.Error("error fetching show for search", slog.String("error", err.Error()))
+		return c.Render(http.StatusOK, "search-alias-results", searchAliasResultsData{
+			Alias:      title,
+			Results:    nil,
+			EpisodeID:  epId,
+			TopScore:   0,
+			MatchCount: 0,
+		})
+	}
+
+	settings, _ := filterService.ResolveSettings(h.DB, show.ID)
+	profile, _ := filterService.ResolveProfile(h.DB, settings)
+	ctx, _ := filterService.BuildContext(h.DB, show, season, number, settings)
+
 	prowlarrIndexerService := prowlarrService.NewProwlarrIndexerService(logger)
 	var indexers []prowlarrSchema.IndexerResponse
 	if err := prowlarrIndexerService.GetIndexers(&indexers); err != nil {
 		logger.Error("error fetching prowlarr indexers", slog.String("error", err.Error()))
 		return c.Render(http.StatusOK, "search-alias-results", searchAliasResultsData{
-			Alias:     title,
-			Results:   nil,
-			EpisodeID: epId,
+			Alias:      title,
+			Results:    nil,
+			EpisodeID:  epId,
+			TopScore:   0,
+			MatchCount: 0,
 		})
 	}
 
@@ -185,30 +230,109 @@ func (h *Handler) SearchAliasResult(c echo.Context) error {
 	if err != nil {
 		logger.Error("error initializing prowlarr service", slog.String("error", err.Error()))
 		return c.Render(http.StatusOK, "search-alias-results", searchAliasResultsData{
-			Alias:     title,
-			Results:   nil,
-			EpisodeID: epId,
+			Alias:      title,
+			Results:    nil,
+			EpisodeID:  epId,
+			TopScore:   0,
+			MatchCount: 0,
 		})
 	}
 
-	query := fmt.Sprintf("%s S%02dE%02d", title, season, number)
-	searchKey := prowlarrSchema.SearchByTypeRequest{
-		Query: query,
-		Type:  "tvsearch",
+	patterns := filterService.SearchPatterns(profile, settings.ShowType)
+
+	var queries []string
+	for _, pattern := range patterns {
+		q, err := filter.ExpandQuery(pattern, ctx, title)
+		if err == nil && strings.TrimSpace(q) != "" {
+			queries = append(queries, q)
+		}
+	}
+	if len(queries) == 0 {
+		queries = []string{title}
 	}
 
-	var results []prowlarrSchema.SearchResponse
-	if err := searchService.SearchByType(&searchKey, &results, indexerIds...); err != nil {
-		logger.Error("error searching prowlarr",
-			slog.String("query", query),
-			slog.String("error", err.Error()),
-		)
+	seen := make(map[string]struct{})
+	var rawResults []prowlarrSchema.SearchResponse
+
+	for _, query := range queries {
+		searchKey := prowlarrSchema.SearchByTypeRequest{
+			Query: query,
+			Type:  "search",
+		}
+
+		var res []prowlarrSchema.SearchResponse
+		if err := searchService.SearchByType(&searchKey, &res, indexerIds...); err != nil {
+			logger.Error("error searching prowlarr",
+				slog.String("query", query),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+
+		for _, r := range res {
+			idKey := r.InfoHash
+			if idKey == "" {
+				idKey = r.Guid
+			}
+			if idKey == "" {
+				idKey = r.Filename
+			}
+			if _, exists := seen[idKey]; !exists {
+				seen[idKey] = struct{}{}
+				rawResults = append(rawResults, r)
+			}
+		}
 	}
+
+	topScore := 0
+	matchCount := 0
+	evaluated := make([]EvaluatedResult, 0, len(rawResults))
+	for _, r := range rawResults {
+		epMatch := filter.MatchEpisode(r.Filename, season, number, settings.ShowType)
+		eval := filter.Evaluate(profile, ctx, r.Filename)
+		score := episodeService.BaseScore(r) + eval.PreferredScore
+
+		meta := filter.ParseReleaseMetadata(r.Filename)
+		item := EvaluatedResult{
+			SearchResponse: r,
+			EpisodeMatched: epMatch,
+			Score:          score,
+			Metadata:       meta,
+		}
+
+		if !epMatch {
+			item.PassedFilter = false
+			item.RejectionReason = "Episode mismatch"
+		} else if !eval.Passed {
+			item.PassedFilter = false
+			item.RejectionReason = eval.RejectedReason
+		} else {
+			item.PassedFilter = true
+			matchCount++
+			if score > topScore {
+				topScore = score
+			}
+		}
+
+		evaluated = append(evaluated, item)
+	}
+
+	sort.Slice(evaluated, func(i, j int) bool {
+		if evaluated[i].PassedFilter != evaluated[j].PassedFilter {
+			return evaluated[i].PassedFilter
+		}
+		if evaluated[i].EpisodeMatched != evaluated[j].EpisodeMatched {
+			return evaluated[i].EpisodeMatched
+		}
+		return evaluated[i].Score > evaluated[j].Score
+	})
 
 	return c.Render(http.StatusOK, "search-alias-results", searchAliasResultsData{
-		Alias:     title,
-		Results:   results,
-		EpisodeID: epId,
+		Alias:      title,
+		Results:    evaluated,
+		EpisodeID:  epId,
+		TopScore:   topScore,
+		MatchCount: matchCount,
 	})
 }
 
