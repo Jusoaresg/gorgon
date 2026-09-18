@@ -3,116 +3,133 @@
 {{ $season := .Season }}
 {{ $episodes := .Episodes }}
 {{ $torrents := .Torrents }}
+{{ $sDownloaded := seasonDownloadedCount $season.Number $episodes }}
+{{ $sTotal := seasonTotalCount $season.Number $episodes }}
+{{ $sPct := calcPercentage $sDownloaded $sTotal }}
+
 <div class="season-container js-season" data-season="{{ $season.Number }}">
-            <div class="season-header" onclick="toggleSeason(this)">
-                <div class="season-info">
-                    <svg class="season-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                    <span class="season-title">Season {{ $season.Number }}</span>
-                </div>
-                <div class="season-actions">
-                    <button class="btn btn-sm btn-outline" onclick="event.stopPropagation()"
-                            hx-get="/front/season/{{ $season.ID }}/modal/tracking"
-                            hx-target="body"
-                            hx-swap="beforeend">Monitor</button>
-                    <button class="btn btn-sm btn-outline" onclick="event.stopPropagation()"
-                            hx-post="/api/v1/database/show/episode/search/season/{{ $season.ID }}"
-                            hx-swap="none"
-                            hx-on::after-request="showToast(event)">Search</button>
-                </div>
+    <div class="season-header" onclick="toggleSeason(this)">
+        <div class="season-info">
+            <svg class="season-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+            <div class="season-title-wrap">
+                <span class="season-title">Season {{ $season.Number }}</span>
+                <span class="season-badge-stat {{ if eq $sDownloaded $sTotal }}season-complete{{ end }}">{{ $sDownloaded }}/{{ $sTotal }}</span>
             </div>
-
-            <div class="season-content">
-                <div class="episodes-list">
-                    {{ range $episodes }}
-                        {{ if eq .Season $season.Number }}
-                        {{ $torrent := index $torrents .ID }}
-                        <div class="episode-card {{ .Tracking }} js-episode" data-episode-id="{{ .ID }}">
-                            <div class="episode-header" onclick="toggleEpisode(this)">
-                                <div class="episode-main-info">
-                                    <svg class="episode-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
-                                    <span class="episode-number">{{ .Number }}</span>
-                                    <div class="episode-title-block">
-                                        <span class="episode-title">{{ .Name }}</span>
-                                        <div class="episode-meta-row">
-                                            <span>S{{ .Season }}E{{ .Number }}</span>
-                                            <span>•</span>
-                                            <span>{{ airDate . }}</span>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="episode-status-block">
-                                    <span class="status-badge {{ .Tracking }}" 
-                                          style="cursor: pointer; transition: transform 0.2s;" 
-                                          title="Change Status"
-                                          hx-get="/front/episode/{{ .ID }}/modal/tracking" 
-                                          hx-target="body" 
-                                          hx-swap="beforeend" 
-                                          onclick="event.stopPropagation()">
-                                        {{ .Tracking }}
-                                    </span>
-                                    
-                                    <div class="action-buttons">
-                                        <button 
-                                            class="btn-icon-sm btn-delete" 
-                                            title="Delete Episode" 
-                                            onclick="event.stopPropagation()"
-                                            style="{{ if eq .Tracking "downloaded" }}display: flex{{ else }}display: none{{ end }}"
-
-                                            hx-trigger="click"
-                                            hx-delete="/api/v1/database/show/episode/{{ .ID }}"
-                                            hx-swap="none"
-                                            hx-on::after-request="showToast(event)"
-                                        >
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-trash" viewBox="0 0 16 16">
-                                                <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/>
-                                                <path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>
-                                            </svg>
-                                        </button>
-                                        <button 
-                                            class="btn-icon-sm js-search-actions" 
-                                            title="Automatic Search" 
-                                            id="automatic-search-{{ .ID }}"
-                                            onclick="event.stopPropagation()"
-                                            style="{{ if eq .Tracking "downloaded" }}display: none{{ else }}display: flex{{ end }}"
-
-                                            hx-trigger="click"
-                                            hx-post="/api/v1/database/show/episode/search"
-                                            hx-vals='{"id": {{ .ID }}}'
-                                            parse-types="true"
-                                            hx-swap="none"
-                                            hx-on::after-request="showToast(event)"
-                                        >
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                                        </button>
-                                        <button class="btn-icon-sm js-search-actions" title="Interactive Search" 
-                                                onclick="event.stopPropagation()"
-                                                style="{{ if eq .Tracking "downloaded" }}display: none{{ else }}display: flex{{ end }}"
-                                                hx-get="/front/episode/{{ .ID }}/interactive-search"
-                                                hx-target="body"
-                                                hx-swap="beforeend">
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
-                                        </button>
-                                        {{ if and $torrent.InfoUrl (or (eq .Tracking "downloaded") (eq .Tracking "snatched")) }}
-                                        <a class="btn-icon-sm btn-release js-release-link" href="{{ $torrent.InfoUrl }}" target="_blank" title="View Release">
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
-                                        </a>
-                                        {{ end }}
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            {{ if .Summary }}
-                            <div class="episode-details">
-                                <div class="episode-details-content js-summary">
-                                    {{ .Summary }}
-                                </div>
-                            </div>
-                            {{ end }}
-                        </div>
-                        {{ end }}
-                    {{ end }}
-                </div>
+            <div class="season-mini-progress">
+                <div class="season-mini-bar" style="width: {{ $sPct }}%;"></div>
             </div>
         </div>
+        <div class="season-actions">
+            <button class="btn btn-sm btn-outline btn-season-action" onclick="event.stopPropagation()"
+                    title="Change Season Monitoring"
+                    hx-get="/front/season/{{ $season.ID }}/modal/tracking"
+                    hx-target="body"
+                    hx-swap="beforeend">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                <span>Monitor</span>
+            </button>
+            <button class="btn btn-sm btn-outline btn-season-action" onclick="event.stopPropagation()"
+                    title="Search Season Episodes"
+                    hx-post="/api/v1/database/show/episode/search/season/{{ $season.ID }}"
+                    hx-swap="none"
+                    hx-on::before-request="toast('Searching season {{ $season.Number }}...', 'info')"
+                    hx-on::after-request="showToast(event)">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                <span>Search</span>
+            </button>
+        </div>
+    </div>
+
+    <div class="season-content">
+        <div class="episodes-list">
+            {{ range $episodes }}
+                {{ if eq .Season $season.Number }}
+                {{ $torrent := index $torrents .ID }}
+                <div class="episode-card {{ .Tracking }} js-episode" data-episode-id="{{ .ID }}">
+                    <div class="episode-header" onclick="toggleEpisode(this)">
+                        <div class="episode-main-info">
+                            <svg class="episode-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                            <span class="episode-number">{{ if lt .Number 10 }}0{{ .Number }}{{ else }}{{ .Number }}{{ end }}</span>
+                            <div class="episode-title-block">
+                                <span class="episode-title">{{ .Name }}</span>
+                                <div class="episode-meta-row">
+                                    <span class="ep-code">S{{ if lt .Season 10 }}0{{ .Season }}{{ else }}{{ .Season }}{{ end }}E{{ if lt .Number 10 }}0{{ .Number }}{{ else }}{{ .Number }}{{ end }}</span>
+                                    {{ if airDate . }}
+                                    <span class="meta-dot">•</span>
+                                    <span class="ep-airdate">{{ airDate . }}</span>
+                                    {{ end }}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="episode-status-block">
+                            <span class="status-badge {{ .Tracking }}" 
+                                  title="Click to Change Status"
+                                  hx-get="/front/episode/{{ .ID }}/modal/tracking" 
+                                  hx-target="body" 
+                                  hx-swap="beforeend" 
+                                  onclick="event.stopPropagation()">
+                                {{ .Tracking }}
+                            </span>
+                            
+                            <div class="action-buttons">
+                                <button 
+                                    class="btn-icon-sm btn-delete" 
+                                    title="Delete Downloaded Episode" 
+                                    onclick="event.stopPropagation()"
+                                    style="{{ if eq .Tracking "downloaded" }}display: flex{{ else }}display: none{{ end }}"
+                                    hx-trigger="click"
+                                    hx-delete="/api/v1/database/show/episode/{{ .ID }}"
+                                    hx-swap="none"
+                                    hx-on::after-request="showToast(event)"
+                                >
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                </button>
+                                <button 
+                                    class="btn-icon-sm js-search-actions" 
+                                    title="Automatic Search" 
+                                    id="automatic-search-{{ .ID }}"
+                                    onclick="event.stopPropagation()"
+                                    style="{{ if eq .Tracking "downloaded" }}display: none{{ else }}display: flex{{ end }}"
+                                    hx-trigger="click"
+                                    hx-post="/api/v1/database/show/episode/search"
+                                    hx-vals='{"id": {{ .ID }}}'
+                                    parse-types="true"
+                                    hx-swap="none"
+                                    hx-on::before-request="toast('Searching episode...', 'info')"
+                                    hx-on::after-request="showToast(event)"
+                                >
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                                </button>
+                                <button class="btn-icon-sm js-search-actions btn-interactive" 
+                                        title="Interactive Search" 
+                                        onclick="event.stopPropagation()"
+                                        style="{{ if eq .Tracking "downloaded" }}display: none{{ else }}display: flex{{ end }}"
+                                        hx-get="/front/episode/{{ .ID }}/interactive-search"
+                                        hx-target="body"
+                                        hx-swap="beforeend">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
+                                </button>
+                                {{ if and $torrent.InfoUrl (or (eq .Tracking "downloaded") (eq .Tracking "snatched")) }}
+                                <a class="btn-icon-sm btn-release js-release-link" href="{{ $torrent.InfoUrl }}" target="_blank" title="View Release in Prowlarr" onclick="event.stopPropagation()">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+                                </a>
+                                {{ end }}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    {{ if .Summary }}
+                    <div class="episode-details">
+                        <div class="episode-details-content js-summary">
+                            {{ .Summary }}
+                        </div>
+                    </div>
+                    {{ end }}
+                </div>
+                {{ end }}
+            {{ end }}
+        </div>
+    </div>
+</div>
 {{ end }}
