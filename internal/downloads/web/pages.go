@@ -21,11 +21,12 @@ import (
 
 type DownloadsData struct {
 	Items        []service.DownloadItem
+	Summary      service.DownloadsSummary
 	ErrorMessage string
 }
 
 func (h *Handler) DownloadsRoute(c echo.Context) error {
-	items, err := h.fetchDownloadItems()
+	items, summary, err := h.fetchDownloadItems()
 	errorMessage := ""
 	if err != nil {
 		errorMessage = "Unable to reach the torrent client. Configure qBittorrent in Settings."
@@ -35,18 +36,74 @@ func (h *Handler) DownloadsRoute(c echo.Context) error {
 		Layout:    "layout",
 		Default:   "downloads",
 		Templates: map[string]string{"download-items": "download-items"},
-		Data:      DownloadsData{Items: items, ErrorMessage: errorMessage},
+		Data:      DownloadsData{Items: items, Summary: summary, ErrorMessage: errorMessage},
 		Styles:    []string{"downloads.css"},
 	})
 }
 
 func (h *Handler) DownloadsItemsHTMX(c echo.Context) error {
-	items, err := h.fetchDownloadItems()
+	items, summary, err := h.fetchDownloadItems()
 	if err != nil {
 		return c.Render(http.StatusOK, "download-items", views.PageData{Data: DownloadsData{Items: []service.DownloadItem{}}})
 	}
 
-	return c.Render(http.StatusOK, "download-items", views.PageData{Data: DownloadsData{Items: items}})
+	return c.Render(http.StatusOK, "download-items", views.PageData{Data: DownloadsData{Items: items, Summary: summary}})
+}
+
+func (h *Handler) PauseDownload(c echo.Context) error {
+	logger := config.GetLogger()
+
+	hash := c.FormValue("hash")
+	if hash == "" {
+		schemas.SendError(c, 400, "Missing torrent hash")
+		return nil
+	}
+
+	torrentService, err := qbittorrentService.NewQBittorrentService(logger)
+	if err != nil {
+		logger.Error("failed to create qbittorrent service for pausing download", slog.String("error", err.Error()))
+		schemas.SendError(c, 500, "Torrent client not available")
+		return nil
+	}
+
+	if err := torrentService.PauseTorrent(hash); err != nil {
+		logger.Error("failed to pause torrent in client", slog.String("hash", hash), slog.String("error", err.Error()))
+		schemas.SendError(c, 500, "Failed to pause download")
+		return nil
+	}
+
+	schemas.SendSuccess(c, "Pause Download", map[string]any{
+		"toastMessage": "Download paused",
+	})
+	return nil
+}
+
+func (h *Handler) ResumeDownload(c echo.Context) error {
+	logger := config.GetLogger()
+
+	hash := c.FormValue("hash")
+	if hash == "" {
+		schemas.SendError(c, 400, "Missing torrent hash")
+		return nil
+	}
+
+	torrentService, err := qbittorrentService.NewQBittorrentService(logger)
+	if err != nil {
+		logger.Error("failed to create qbittorrent service for resuming download", slog.String("error", err.Error()))
+		schemas.SendError(c, 500, "Torrent client not available")
+		return nil
+	}
+
+	if err := torrentService.ResumeTorrent(hash); err != nil {
+		logger.Error("failed to resume torrent in client", slog.String("hash", hash), slog.String("error", err.Error()))
+		schemas.SendError(c, 500, "Failed to resume download")
+		return nil
+	}
+
+	schemas.SendSuccess(c, "Resume Download", map[string]any{
+		"toastMessage": "Download resumed",
+	})
+	return nil
 }
 
 func (h *Handler) RemoveDownload(c echo.Context) error {
@@ -112,20 +169,26 @@ func (h *Handler) RemoveDownload(c echo.Context) error {
 	return nil
 }
 
-func (h *Handler) fetchDownloadItems() ([]service.DownloadItem, error) {
+func (h *Handler) fetchDownloadItems() ([]service.DownloadItem, service.DownloadsSummary, error) {
 	logger := config.GetLogger()
 
 	torrentService, err := qbittorrentService.NewQBittorrentService(logger)
 	if err != nil {
 		logger.Warn("failed to create qbittorrent service for downloads page", slog.String("error", err.Error()))
-		return []service.DownloadItem{}, err
+		return []service.DownloadItem{}, service.DownloadsSummary{}, err
 	}
 
 	var torrents []schema.CheckTorrentResponse
-	if err := torrentService.CheckTorrents("all", &torrents); err != nil {
+	if err := torrentService.CheckTorrentsWithCategory("all", "gorgon", &torrents); err != nil {
 		logger.Warn("failed to fetch torrents for downloads page", slog.String("error", err.Error()))
-		return []service.DownloadItem{}, err
+		return []service.DownloadItem{}, service.DownloadsSummary{}, err
 	}
 
-	return h.Service.BuildDownloads(torrents)
+	items, err := h.Service.BuildDownloads(torrents)
+	if err != nil {
+		return []service.DownloadItem{}, service.DownloadsSummary{}, err
+	}
+
+	summary := h.Service.ComputeSummary(items)
+	return items, summary, nil
 }

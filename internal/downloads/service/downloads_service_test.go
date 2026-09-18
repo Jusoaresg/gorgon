@@ -196,3 +196,37 @@ func TestBuildDownloads_SortActiveFirstThenAddedOn(t *testing.T) {
 	assert.Equal(t, "pending1", items[2].Torrent.Hash, "waiting to import, added first")
 	assert.Equal(t, "pending2", items[3].Torrent.Hash, "waiting to import, added second")
 }
+
+func TestComputeSummary(t *testing.T) {
+	db := testutils.GetTestDB()
+	svc := newTestService(db)
+
+	items := []DownloadItem{
+		{
+			Torrent: schema.CheckTorrentResponse{
+				DlSpeed: 5000000,
+				UpSpeed: 1000000,
+				State:   "downloading",
+			},
+		},
+		{
+			Torrent: schema.CheckTorrentResponse{
+				DlSpeed: 2000000,
+				UpSpeed: 500000,
+				State:   "stalledDL",
+			},
+		},
+		{
+			Torrent: schema.CheckTorrentResponse{
+				DlSpeed: 0,
+				UpSpeed: 200000,
+				State:   "uploading",
+			},
+		},
+	}
+
+	summary := svc.ComputeSummary(items)
+	assert.Equal(t, 7000000, summary.TotalDlSpeed)
+	assert.Equal(t, 1700000, summary.TotalUpSpeed)
+	assert.Equal(t, 2, summary.ActiveCount)
+}

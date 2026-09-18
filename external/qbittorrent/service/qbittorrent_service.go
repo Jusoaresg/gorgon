@@ -366,15 +366,93 @@ func (q *QBittorrentService) DeleteTorrent(hash string, deleteFile bool) error {
 	return nil
 }
 
+func (q *QBittorrentService) PauseTorrent(hash string) error {
+	resp, err := q.doAuthenticatedRequest(func() (*http.Response, error) {
+		form := url.Values{}
+		form.Add("hashes", hash)
+
+		headers := map[string]string{
+			"Content-Type": "application/x-www-form-urlencoded",
+			"Cookie":       q.cookieHeader(),
+			"Referer":      fmt.Sprintf("%s:%s", q.host, q.port),
+		}
+
+		resp, err := q.APIService.PostRaw("/api/v2/torrents/pause", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()), headers)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			resp.Body.Close()
+			return q.APIService.PostRaw("/api/v2/torrents/stop", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()), headers)
+		}
+		return resp, nil
+	})
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to pause torrent (status=%d): %s", resp.StatusCode, responseBodySnippet(resp))
+	}
+
+	return nil
+}
+
+func (q *QBittorrentService) ResumeTorrent(hash string) error {
+	resp, err := q.doAuthenticatedRequest(func() (*http.Response, error) {
+		form := url.Values{}
+		form.Add("hashes", hash)
+
+		headers := map[string]string{
+			"Content-Type": "application/x-www-form-urlencoded",
+			"Cookie":       q.cookieHeader(),
+			"Referer":      fmt.Sprintf("%s:%s", q.host, q.port),
+		}
+
+		resp, err := q.APIService.PostRaw("/api/v2/torrents/resume", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()), headers)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			resp.Body.Close()
+			return q.APIService.PostRaw("/api/v2/torrents/start", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()), headers)
+		}
+		return resp, nil
+	})
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to resume torrent (status=%d): %s", resp.StatusCode, responseBodySnippet(resp))
+	}
+
+	return nil
+}
+
 func (q *QBittorrentService) CheckTorrents(filter string, response *[]schema.CheckTorrentResponse) error {
+	return q.CheckTorrentsWithCategory(filter, "", response)
+}
+
+func (q *QBittorrentService) CheckTorrentsWithCategory(filter, category string, response *[]schema.CheckTorrentResponse) error {
 	resp, err := q.doAuthenticatedRequest(func() (*http.Response, error) {
 		headers := map[string]string{
 			"Cookie":  q.cookieHeader(),
 			"Referer": fmt.Sprintf("%s:%s", q.host, q.port),
 		}
 
-		endpoint := fmt.Sprintf("/api/v2/torrents/info?filter=%s", filter)
-		q.Logger.Debug("Calling QBittorrent API", slog.String("url", endpoint), slog.String("filter", filter))
+		params := url.Values{}
+		if filter != "" {
+			params.Add("filter", filter)
+		}
+		if category != "" {
+			params.Add("category", category)
+		}
+
+		endpoint := fmt.Sprintf("/api/v2/torrents/info?%s", params.Encode())
+		q.Logger.Debug("Calling QBittorrent API", slog.String("url", endpoint), slog.String("category", category))
 
 		resp, err := q.APIService.GetWithHeadersRaw(endpoint, headers)
 		if err != nil {

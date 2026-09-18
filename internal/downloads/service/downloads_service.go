@@ -14,15 +14,17 @@ import (
 const gorgonCategory = "gorgon"
 
 var finishedStates = map[string]bool{
-	"uploading":    true,
-	"stalledUP":    true,
-	"queuedUP":     true,
-	"pausedUP":     true,
-	"forcedUP":     true,
-	"checkingUP":   true,
-	"error":        true,
-	"missingFiles": true,
-	"unknown":      true,
+	"uploading":       true,
+	"stalledUP":       true,
+	"queuedUP":        true,
+	"pausedUP":        true,
+	"stoppedUP":       true,
+	"forcedUP":        true,
+	"forcedUploading": true,
+	"checkingUP":      true,
+	"error":           true,
+	"missingFiles":    true,
+	"unknown":         true,
 }
 
 type EpisodeInfo struct {
@@ -45,6 +47,12 @@ type DownloadItem struct {
 	Episode *EpisodeInfo
 }
 
+type DownloadsSummary struct {
+	TotalDlSpeed int
+	TotalUpSpeed int
+	ActiveCount  int
+}
+
 type DownloadsService struct {
 	db     *sqlx.DB
 	logger *slog.Logger
@@ -58,7 +66,14 @@ func NewDownloadsService(db *sqlx.DB, logger *slog.Logger) *DownloadsService {
 }
 
 func (s *DownloadsService) BuildDownloads(torrents []schema.CheckTorrentResponse) ([]DownloadItem, error) {
-	episodesByHash, err := s.episodesByHash()
+	hashes := make([]string, 0, len(torrents))
+	for _, torrent := range torrents {
+		if torrent.Category == gorgonCategory && torrent.Hash != "" {
+			hashes = append(hashes, strings.ToLower(torrent.Hash))
+		}
+	}
+
+	episodesByHash, err := s.episodesByHashes(hashes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load episodes by torrent hash: %w", err)
 	}
@@ -91,6 +106,18 @@ func (s *DownloadsService) BuildDownloads(torrents []schema.CheckTorrentResponse
 	return items, nil
 }
 
+func (s *DownloadsService) ComputeSummary(items []DownloadItem) DownloadsSummary {
+	var summary DownloadsSummary
+	for _, item := range items {
+		summary.TotalDlSpeed += item.Torrent.DlSpeed
+		summary.TotalUpSpeed += item.Torrent.UpSpeed
+		if !finishedStates[item.Torrent.State] {
+			summary.ActiveCount++
+		}
+	}
+	return summary
+}
+
 func sortDownloads(items []DownloadItem) {
 	sort.SliceStable(items, func(i, j int) bool {
 		iActive := !finishedStates[items[i].Torrent.State]
@@ -102,17 +129,27 @@ func sortDownloads(items []DownloadItem) {
 	})
 }
 
-func (s *DownloadsService) episodesByHash() (map[string]EpisodeInfo, error) {
-	var rows []EpisodeInfo
-	query := `
+func (s *DownloadsService) episodesByHashes(hashes []string) (map[string]EpisodeInfo, error) {
+	if len(hashes) == 0 {
+		return map[string]EpisodeInfo{}, nil
+	}
+
+	query, args, err := sqlx.In(`
 		SELECT e.id AS episode_id, e.show_id, e.name, e.season, e.number, e.tracking,
 		       s.name AS show_name, s.image_medium AS show_image,
 		       et.hash AS hash, et.title AS title, et.indexer AS indexer, et.info_url AS info_url
 		FROM episodes e
 		JOIN shows s ON e.show_id = s.id
 		JOIN episode_torrents et ON et.episode_id = e.id
-	`
-	if err := s.db.Select(&rows, query); err != nil {
+		WHERE LOWER(et.hash) IN (?)
+	`, hashes)
+	if err != nil {
+		return nil, err
+	}
+
+	query = s.db.Rebind(query)
+	var rows []EpisodeInfo
+	if err := s.db.Select(&rows, query, args...); err != nil {
 		return nil, err
 	}
 
