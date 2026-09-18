@@ -178,46 +178,86 @@ func NewTemplate() *Template {
 		},
 		"torrentStateLabel": func(state string) string {
 			switch state {
-			case "downloading", "forcedDL":
+			case "downloading", "forcedDL", "forcedDownloading":
 				return "Downloading"
-			case "metaDL":
+			case "metaDL", "forcedMetaDL":
 				return "Fetching Metadata"
-			case "queuedDL":
+			case "queuedDL", "queuedForChecking":
 				return "Queued"
 			case "stalledDL":
 				return "Stalled"
-			case "pausedDL":
+			case "pausedDL", "stoppedDL":
 				return "Paused"
-			case "checkingDL", "checkingResumeData":
+			case "checkingDL", "checkingResumeData", "checkingForResume":
 				return "Checking"
 			case "allocating":
 				return "Allocating"
 			case "moving":
 				return "Moving"
-			case "uploading", "stalledUP", "queuedUP", "pausedUP", "forcedUP", "checkingUP":
+			case "uploading", "stalledUP", "queuedUP", "pausedUP", "stoppedUP", "forcedUP", "forcedUploading", "checkingUP":
 				return "Waiting to Import"
+			case "error":
+				return "Error"
+			case "missingFiles":
+				return "Missing Files"
 			default:
-				return "Unknown"
+				s := strings.ToLower(state)
+				if strings.Contains(s, "pause") || strings.Contains(s, "stop") {
+					return "Paused"
+				}
+				if strings.Contains(s, "meta") {
+					return "Fetching Metadata"
+				}
+				if strings.Contains(s, "check") || strings.Contains(s, "allocat") {
+					return "Checking"
+				}
+				if strings.Contains(s, "up") || strings.Contains(s, "seed") {
+					return "Waiting to Import"
+				}
+				if strings.Contains(s, "dl") || strings.Contains(s, "down") {
+					return "Downloading"
+				}
+				return "Starting"
 			}
 		},
 		"torrentStateClass": func(state string) string {
 			switch state {
-			case "downloading", "forcedDL":
+			case "downloading", "forcedDL", "forcedDownloading":
 				return "downloading"
-			case "metaDL":
+			case "metaDL", "forcedMetaDL":
 				return "metadata"
-			case "queuedDL", "pausedDL":
+			case "queuedDL", "queuedForChecking":
 				return "queued"
+			case "pausedDL", "stoppedDL":
+				return "paused"
 			case "stalledDL":
 				return "stalled"
-			case "checkingDL", "checkingResumeData", "allocating":
+			case "checkingDL", "checkingResumeData", "checkingForResume", "allocating":
 				return "checking"
 			case "moving":
 				return "moving"
-			case "uploading", "stalledUP", "queuedUP", "pausedUP", "forcedUP", "checkingUP":
+			case "uploading", "stalledUP", "queuedUP", "pausedUP", "stoppedUP", "forcedUP", "forcedUploading", "checkingUP":
 				return "waiting"
+			case "error", "missingFiles":
+				return "stalled"
 			default:
-				return "paused"
+				s := strings.ToLower(state)
+				if strings.Contains(s, "pause") || strings.Contains(s, "stop") {
+					return "paused"
+				}
+				if strings.Contains(s, "meta") {
+					return "metadata"
+				}
+				if strings.Contains(s, "check") || strings.Contains(s, "allocat") {
+					return "checking"
+				}
+				if strings.Contains(s, "up") || strings.Contains(s, "seed") {
+					return "waiting"
+				}
+				if strings.Contains(s, "dl") || strings.Contains(s, "down") {
+					return "downloading"
+				}
+				return "queued"
 			}
 		},
 	})

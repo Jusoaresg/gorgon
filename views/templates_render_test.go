@@ -18,6 +18,7 @@ import (
 
 type renderData struct {
 	Items        []service.DownloadItem
+	Summary      service.DownloadsSummary
 	ErrorMessage string
 }
 
