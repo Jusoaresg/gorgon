@@ -6,8 +6,10 @@ import (
 	"strconv"
 
 	"github.com/jusoaresg/gorgon/config"
+	qbittorrentService "github.com/jusoaresg/gorgon/external/qbittorrent/service"
 	"github.com/jusoaresg/gorgon/internal/episode/events"
 	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
+	epContentModel "github.com/jusoaresg/gorgon/internal/episode_content/model"
 	"github.com/jusoaresg/gorgon/internal/paths"
 	"github.com/jusoaresg/gorgon/pkg/schemas"
 	"github.com/jusoaresg/gorgon/utils"
@@ -63,6 +65,16 @@ func (h *Handler) DeleteDownloadedEpisode(c echo.Context) error {
 		return err
 	}
 
+	episodeTorrent, _ := h.EpisodeTorrentRepo.GetByEpisodeID(ep.ID)
+	if episodeTorrent.Hash != "" {
+		torrentService, err := qbittorrentService.NewQBittorrentService(h.Logger)
+		if err == nil {
+			if err := torrentService.DeleteTorrent(episodeTorrent.Hash, true); err != nil {
+				h.Logger.Error("Failed to delete torrent from client", slog.String("hash", episodeTorrent.Hash), slog.String("error", err.Error()))
+			}
+		}
+	}
+
 	downloadFolder, err := paths.GetTorrentDownloadFolder()
 	if err != nil {
 		return err
@@ -81,6 +93,9 @@ func (h *Handler) DeleteDownloadedEpisode(c echo.Context) error {
 			h.Logger.Error("Failed to delete episode content from the database (The File was deleted)", slog.String("error", err.Error()))
 		}
 	}
+
+	_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, ep, epContentModel.EpisodeContent{})
+	_ = utils.CleanBrokenSymlinksInSeason(cfg.ShowsFolder, show.Name, ep.Season)
 
 	if err := h.EpisodeTorrentRepo.DeleteByEpisodeID(ep.ID); err != nil {
 		h.Logger.Error("Failed to delete episode torrent association", slog.Int64("episode_id", ep.ID), slog.String("error", err.Error()))

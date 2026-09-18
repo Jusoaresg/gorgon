@@ -8,6 +8,7 @@ import (
 	"github.com/jusoaresg/gorgon/internal/episode/events"
 	"github.com/jusoaresg/gorgon/internal/episode/model"
 	episodeRepository "github.com/jusoaresg/gorgon/internal/episode/repository"
+	epContentModel "github.com/jusoaresg/gorgon/internal/episode_content/model"
 	epContentRepository "github.com/jusoaresg/gorgon/internal/episode_content/repository"
 	episodeTorrentRepository "github.com/jusoaresg/gorgon/internal/episode_torrent/repository"
 	"github.com/jusoaresg/gorgon/internal/paths"
@@ -50,6 +51,20 @@ func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *servic
 
 			if err := resetToSkipped(ep, episodeRepo); err != nil {
 				return err
+			}
+
+			contents, err := episodeContentRepo.ListByEpisodeId(ep.ID)
+			if err == nil {
+				showRepo := showRepository.NewShowRepository(safeDB.Db)
+				show, err := showRepo.GetById(ep.ShowID)
+				if err == nil {
+					for _, content := range contents {
+						_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, *ep, content)
+						_ = episodeContentRepo.DeleteById(content.ID)
+					}
+					_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, *ep, epContentModel.EpisodeContent{})
+					_ = utils.CleanBrokenSymlinksInSeason(cfg.ShowsFolder, show.Name, ep.Season)
+				}
 			}
 
 			if err := episodeTorrentRepo.DeleteByEpisodeID(ep.ID); err != nil {

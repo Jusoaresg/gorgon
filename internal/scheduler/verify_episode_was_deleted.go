@@ -1,14 +1,18 @@
 package scheduler
 
 import (
-	"github.com/jusoaresg/gorgon/config"
-	"github.com/jusoaresg/gorgon/internal/episode/model"
-	episodeRepositoy "github.com/jusoaresg/gorgon/internal/episode/repository"
-	epContentRepository "github.com/jusoaresg/gorgon/internal/episode_content/repository"
-	episodeTorrentRepository "github.com/jusoaresg/gorgon/internal/episode_torrent/repository"
 	"log/slog"
 	"os"
 	"path/filepath"
+
+	"github.com/jusoaresg/gorgon/config"
+	"github.com/jusoaresg/gorgon/internal/episode/model"
+	episodeRepositoy "github.com/jusoaresg/gorgon/internal/episode/repository"
+	epContentModel "github.com/jusoaresg/gorgon/internal/episode_content/model"
+	epContentRepository "github.com/jusoaresg/gorgon/internal/episode_content/repository"
+	episodeTorrentRepository "github.com/jusoaresg/gorgon/internal/episode_torrent/repository"
+	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
+	"github.com/jusoaresg/gorgon/utils"
 )
 
 func VerifyEpisodeWasDeleted() {
@@ -16,13 +20,13 @@ func VerifyEpisodeWasDeleted() {
 	db := config.GetSQLite()
 
 	configFile, err := config.LoadConfig()
-	_ = configFile
 	if err != nil {
 		return
 	}
 
 	episodeRepo := episodeRepositoy.NewEpisodeRepository(db)
 	episodeTorrentRepo := episodeTorrentRepository.NewEpisodeTorrentRepository(db)
+	showRepo := showRepository.NewShowRepository(db)
 	episodes, err := episodeRepo.ListByTracking(model.TrackingDownloaded)
 	if err != nil {
 		return
@@ -40,6 +44,8 @@ func VerifyEpisodeWasDeleted() {
 			continue
 		}
 
+		show, err := showRepo.GetById(episode.ShowID)
+
 		for _, episode_content := range contents {
 
 			fileFolder := filepath.Join(configFile.QBittorrentDownloadFolder, episode_content.Name)
@@ -52,6 +58,12 @@ func VerifyEpisodeWasDeleted() {
 				err := episodeRepo.Update(episode)
 				if err != nil {
 					continue
+				}
+
+				if show.Name != "" {
+					_ = utils.DeleteSymlink(configFile.ShowsFolder, show.Name, episode, episode_content)
+					_ = utils.DeleteSymlink(configFile.ShowsFolder, show.Name, episode, epContentModel.EpisodeContent{})
+					_ = utils.CleanBrokenSymlinksInSeason(configFile.ShowsFolder, show.Name, episode.Season)
 				}
 
 				episodeContentRepo.DeleteById(episode_content.ID)

@@ -10,7 +10,11 @@ import (
 	"github.com/jusoaresg/gorgon/internal/downloads/service"
 	episodeEvents "github.com/jusoaresg/gorgon/internal/episode/events"
 	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
+	epContentModel "github.com/jusoaresg/gorgon/internal/episode_content/model"
+	epContentRepository "github.com/jusoaresg/gorgon/internal/episode_content/repository"
+	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
 	"github.com/jusoaresg/gorgon/pkg/schemas"
+	"github.com/jusoaresg/gorgon/utils"
 	"github.com/jusoaresg/gorgon/views"
 	"github.com/labstack/echo/v4"
 )
@@ -75,6 +79,24 @@ func (h *Handler) RemoveDownload(c echo.Context) error {
 
 		episode, err := h.EpisodeRepo.GetByID(episodeTorrent.EpisodeId)
 		if err == nil {
+			cfg, err := config.LoadConfig()
+			if err == nil {
+				showRepo := showRepository.NewShowRepository(h.DB)
+				show, err := showRepo.GetById(episode.ShowID)
+				if err == nil {
+					epContentRepo := epContentRepository.NewEpisodeContentRepository(h.DB)
+					episodeContents, err := epContentRepo.ListByEpisodeId(episode.ID)
+					if err == nil {
+						for _, ec := range episodeContents {
+							_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, episode, ec)
+							_ = epContentRepo.DeleteById(ec.ID)
+						}
+					}
+					_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, episode, epContentModel.EpisodeContent{})
+					_ = utils.CleanBrokenSymlinksInSeason(cfg.ShowsFolder, show.Name, episode.Season)
+				}
+			}
+
 			episode.Tracking = episodeModel.TrackingSkipped
 			if err := h.EpisodeRepo.Update(episode); err != nil {
 				logger.Error("failed to reset episode tracking to skipped", slog.Int64("episode_id", episode.ID), slog.String("error", err.Error()))

@@ -3,9 +3,12 @@ package api
 import (
 	"log/slog"
 
+	"github.com/jusoaresg/gorgon/config"
 	"github.com/jusoaresg/gorgon/external/qbittorrent/service"
 	episodeEvents "github.com/jusoaresg/gorgon/internal/episode/events"
+	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
 	"github.com/jusoaresg/gorgon/internal/episode/schema"
+	epContentModel "github.com/jusoaresg/gorgon/internal/episode_content/model"
 	"github.com/jusoaresg/gorgon/pkg/schemas"
 	"github.com/jusoaresg/gorgon/utils"
 
@@ -38,6 +41,8 @@ func (h *Handler) ChangeEpisodeStatus(c echo.Context) error {
 		h.Logger.Error("Failed to create qbittorrent service", slog.String("error", err.Error()))
 	}
 
+	cfg, _ := config.LoadConfig()
+
 	episodes, err := h.EpisodeRepo.GetAllByID(utils.ToInt64Slice(request.EpisodeIds)...)
 	if err != nil {
 		h.Logger.Error("Error while fetching episode from database", slog.String("error", err.Error()))
@@ -46,16 +51,32 @@ func (h *Handler) ChangeEpisodeStatus(c echo.Context) error {
 	}
 
 	for _, episode := range episodes {
+		if request.Tracking != episodeModel.TrackingDownloaded {
+			show, err := h.ShowRepo.GetById(episode.ShowID)
+			if err == nil && cfg != nil {
+				episodeContents, err := h.EpisodeContentRepo.ListByEpisodeId(episode.ID)
+				if err == nil {
+					for _, ec := range episodeContents {
+						_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, episode, ec)
+						_ = h.EpisodeContentRepo.DeleteById(ec.ID)
+					}
+				}
+				_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, episode, epContentModel.EpisodeContent{})
+				_ = utils.CleanBrokenSymlinksInSeason(cfg.ShowsFolder, show.Name, episode.Season)
+			}
+		}
 
 		episodeTorrent, err := h.EpisodeTorrentRepo.GetByEpisodeID(episode.ID)
 		if err == nil && episodeTorrent.Hash != "" {
-			err := qbittorrentService.DeleteTorrent(episodeTorrent.Hash, true)
-			if err != nil {
-				h.Logger.Error(
-					"Error while deleting torrent",
-					slog.String("error", err.Error()),
-					slog.Int64("episode_id", episode.ID),
-				)
+			if qbittorrentService != nil {
+				err := qbittorrentService.DeleteTorrent(episodeTorrent.Hash, true)
+				if err != nil {
+					h.Logger.Error(
+						"Error while deleting torrent",
+						slog.String("error", err.Error()),
+						slog.Int64("episode_id", episode.ID),
+					)
+				}
 			}
 			if err := h.EpisodeTorrentRepo.DeleteByEpisodeID(episode.ID); err != nil {
 				h.Logger.Error(

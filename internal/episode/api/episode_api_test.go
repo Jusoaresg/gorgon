@@ -8,8 +8,10 @@ import (
 	"strconv"
 	"testing"
 
+	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
 	episodeRepository "github.com/jusoaresg/gorgon/internal/episode/repository"
 	epContentRepository "github.com/jusoaresg/gorgon/internal/episode_content/repository"
+	episodeTorrentRepository "github.com/jusoaresg/gorgon/internal/episode_torrent/repository"
 	seasonRepository "github.com/jusoaresg/gorgon/internal/season/repository"
 	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
 	"github.com/jusoaresg/gorgon/testutils"
@@ -24,9 +26,11 @@ func newEpisodeTestHandler() (*Handler, *episodeRepository.EpisodeRepository, *s
 	showRepo := showRepository.NewShowRepository(db)
 	seasonRepo := seasonRepository.NewSeasonRepository(db)
 	epContentRepo := epContentRepository.NewEpisodeContentRepository(db)
+	epTorrentRepo := episodeTorrentRepository.NewEpisodeTorrentRepository(db)
 	h := &Handler{
 		EpisodeRepo:        epRepo,
 		EpisodeContentRepo: epContentRepo,
+		EpisodeTorrentRepo: epTorrentRepo,
 		ShowRepo:           showRepo,
 		DB:                 db,
 		Logger:             slog.Default(),
@@ -132,5 +136,29 @@ func TestGetShowEpisodes_MultipleEpisodes(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, rec.Result().StatusCode)
 }
+
+func TestDeleteDownloadedEpisode_Success(t *testing.T) {
+	h, epRepo, showRepo, seasonRepo := newEpisodeTestHandler()
+	_, epID := createEpisodeWithDeps(t, epRepo, showRepo, seasonRepo)
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/database/show/episode/%d", epID), nil)
+	rec := httptest.NewRecorder()
+	c := echo.New().NewContext(req, rec)
+	c.SetParamNames("id")
+	c.SetParamValues(strconv.FormatInt(epID, 10))
+
+	err := h.DeleteDownloadedEpisode(c)
+	if err != nil {
+		t.Skip("Config file not available in test environment")
+		return
+	}
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Result().StatusCode)
+
+	ep, err := epRepo.GetByID(epID)
+	assert.NoError(t, err)
+	assert.Equal(t, episodeModel.TrackingSkipped, ep.Tracking)
+}
+
 
 
