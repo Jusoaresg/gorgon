@@ -1,17 +1,19 @@
 {{ define "downloads" }}
 <div id="downloads-container"
+    hx-ext="morph"
     hx-get="/front/downloads/items"
     hx-trigger="every 2s"
-    hx-swap="outerHTML">
+    hx-swap="morph:outerHTML">
     {{ template "download-inner" . }}
 </div>
 {{ end }}
 
 {{ define "download-items" }}
 <div id="downloads-container"
+    hx-ext="morph"
     hx-get="/front/downloads/items"
     hx-trigger="every 2s"
-    hx-swap="outerHTML">
+    hx-swap="morph:outerHTML">
     {{ template "download-inner" . }}
 </div>
 {{ end }}
@@ -25,7 +27,19 @@
             <p class="text-secondary">active transfers in the torrent client</p>
         </div>
         {{ if $data.Items }}
-        <span class="downloads-count">{{ len $data.Items }} active</span>
+        <div class="downloads-header-stats">
+            <div class="downloads-speed-badges">
+                <span class="downloads-speed-badge speed-dl" title="Total Download Speed">
+                    <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path></svg>
+                    {{ formatSpeed $data.Summary.TotalDlSpeed }}
+                </span>
+                <span class="downloads-speed-badge speed-up" title="Total Upload Speed">
+                    <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18"></path></svg>
+                    {{ formatSpeed $data.Summary.TotalUpSpeed }}
+                </span>
+            </div>
+            <span class="downloads-count">{{ len $data.Items }} active</span>
+        </div>
         {{ end }}
     </div>
 
@@ -36,14 +50,20 @@
     </div>
     {{ else if not $data.Items }}
     <div class="downloads-empty">
-        <svg class="downloads-empty-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"></path></svg>
-        <span>No active downloads</span>
-        <p class="text-secondary">Episodes being downloaded will show up here.</p>
+        <div class="downloads-empty-icon-wrap">
+            <svg class="downloads-empty-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+        </div>
+        <h3>No active downloads</h3>
+        <p class="text-secondary">Episodes currently being downloaded will show up here automatically.</p>
+        <a href="/shows" class="btn btn-primary downloads-empty-cta">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+            Browse Shows
+        </a>
     </div>
     {{ else }}
     <div class="downloads-list">
         {{ range $item := $data.Items }}
-        <div class="download-card">
+        <div class="download-card" id="download-card-{{ $item.Torrent.Hash }}">
             <div class="download-card-poster">
                 {{ if and $item.Episode $item.Episode.ShowImage }}
                 <img src="{{ $item.Episode.ShowImage }}" alt="{{ $item.Episode.ShowName }}" loading="lazy">
@@ -69,6 +89,23 @@
                     </div>
                     <div class="download-header-right">
                         <div class="download-card-actions">
+                            {{ if eq (torrentStateClass $item.Torrent.State) "paused" }}
+                            <button class="download-action-btn download-action-resume" title="Resume Download"
+                                    hx-post="/front/downloads/resume"
+                                    hx-vals='{"hash": "{{ $item.Torrent.Hash }}"}'
+                                    hx-swap="none"
+                                    hx-on::after-request="showToast(event)">
+                                <svg class="download-action-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            </button>
+                            {{ else }}
+                            <button class="download-action-btn download-action-pause" title="Pause Download"
+                                    hx-post="/front/downloads/pause"
+                                    hx-vals='{"hash": "{{ $item.Torrent.Hash }}"}'
+                                    hx-swap="none"
+                                    hx-on::after-request="showToast(event)">
+                                <svg class="download-action-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            </button>
+                            {{ end }}
                             {{ if and $item.Episode $item.Episode.InfoUrl }}
                             <a class="download-action-btn" href="{{ $item.Episode.InfoUrl }}" target="_blank" title="View Release">
                                 <svg class="download-action-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
@@ -124,3 +161,4 @@
     {{ end }}
 </div>
 {{ end }}
+
