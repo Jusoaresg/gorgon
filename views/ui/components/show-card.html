@@ -1,58 +1,55 @@
 {{ define "show-card" }}
-    {{ $downloaded := countDownloaded .Episodes }}
-    {{ $monitored := countMonitored .Episodes }}
-    {{ $percentage := calcPercentage $downloaded $monitored }}
+{{ $downloaded := countDownloaded .Episodes }}
+{{ $monitored := countMonitored .Episodes }}
+{{ $percentage := calcPercentage $downloaded $monitored }}
+{{ $nextInfo := nextEpisodeInfo .Episodes .Show.Status }}
+{{ $year := extractYear .Show.Premiered }}
+{{ $genre := primaryGenre .Show.Genres .Show.Type }}
 
-    <a href="/show/{{ .Show.ID }}" class="show-card-link">
-        <div class="show-card">
-            <div class="show-poster-wrapper">
-                <img src="{{ .Show.ImageMedium }}" alt="{{ .Show.Name }}" loading="lazy" class="show-poster-img">
-                
-                <!-- Hover Overlay with Action -->
-                <div class="poster-overlay">
-                    <span class="view-btn">View Details</span>
-                </div>
+<a href="/show/{{ .Show.ID }}" class="show-card-link">
+    <div class="show-card concept-dashboard">
+        <!-- Poster Top -->
+        <div class="show-poster-wrapper">
+            <img src="{{ .Show.ImageMedium }}" alt="{{ .Show.Name }}" loading="lazy" class="show-poster-img">
 
-                <!-- Slim Progress Line (Separator) -->
-                <div class="progress-line-container">
-                    <div class="progress-line-fill" style="width: {{ $percentage }}%;"></div>
-                </div>
-            </div>
-
-            <div class="show-info-body">
-                <div class="show-main-header">
-                    <h3 class="show-title" title="{{ .Show.Name }}">{{ .Show.Name }}</h3>
-                    <!-- Status Pulse -->
-                    <div class="status-pulse status-{{ .Show.Status }}" title="{{ .Show.Status }}"></div>
-                </div>
-                
-                <div class="show-meta-tags">
-                    <span>{{ .Show.Premiered }}</span>
-                    <span class="separator">•</span>
-                    {{ if gt $monitored 0 }}
-                        <span>{{ $downloaded }}/{{ $monitored }} Eps</span>
-                    {{ else }}
-                        <span>All Skipped</span>
-                    {{ end }}
-                </div>
-
-                <div class="show-card-footer">
-                    <div class="monitored-status" title="Monitored">
-                        <!-- Subtle Radar Icon -->
-                        <svg class="monitor-icon active" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                        <span class="monitor-text">Monitored</span>
-                    </div>
-
-                    <div class="next-episode-badge">
-                         {{ if eq .Show.Status "Running" }}
-                            <svg class="calendar-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2-2v12a2 2 0 002 2z"></path></svg>
-                            <span>Soon</span>
-                         {{ else }}
-                            <span>{{ .Show.Status }}</span>
-                         {{ end }}
-                    </div>
-                </div>
+            <!-- Hover Overlay -->
+            <div class="poster-overlay">
+                <span class="view-btn">View Show</span>
             </div>
         </div>
-    </a>
+
+        <!-- Info Body -->
+        <div class="show-info-body">
+            <!-- Header: Title + Status Pulse Dot -->
+            <div class="show-main-header">
+                <h3 class="show-title" title="{{ .Show.Name }}">{{ .Show.Name }}</h3>
+                <div class="status-pulse status-{{ .Show.Status }}" title="{{ .Show.Status }}"></div>
+            </div>
+
+            <!-- Subtitle: Year • Primary Genre • Eps Count -->
+            <div class="show-meta-tags">
+                {{ if $year }}<span class="meta-year">{{ $year }}</span><span class="separator">•</span>{{ end }}
+                <span class="meta-genre" title="{{ $genre }}">{{ $genre }}</span>
+                <span class="separator">•</span>
+                {{ if gt $monitored 0 }}
+                    <span class="eps-count {{ if eq $percentage 100 }}all-downloaded{{ end }}">{{ $downloaded }}/{{ $monitored }} Eps</span>
+                {{ else }}
+                    <span class="eps-count">Skipped</span>
+                {{ end }}
+            </div>
+
+            <!-- Next Episode / Status Footer Banner -->
+            <div class="show-card-footer-banner badge-{{ toLower $nextInfo }}">
+                {{ if and (ne $nextInfo "Ended") (ne $nextInfo "TBD") }}
+                <svg class="calendar-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2-2v12a2 2 0 002 2z">
+                    </path>
+                </svg>
+                {{ end }}
+                <span class="footer-banner-text">{{ $nextInfo }}</span>
+            </div>
+        </div>
+    </div>
+</a>
 {{ end }}
