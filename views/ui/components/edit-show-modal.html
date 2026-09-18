@@ -1,6 +1,6 @@
 {{ define "edit-show-modal" }}
-<div id="modal-container" class="modal-overlay">
-    <div class="modal-content modal-lg">
+<div id="modal-container" class="modal-overlay" onclick="closeModal(event)">
+    <div class="modal-content modal-lg" onclick="event.stopPropagation()">
 
         <!-- Header -->
         <div class="modal-header">
@@ -8,7 +8,7 @@
                 <h3 class="modal-title">Edit Series</h3>
                 <span class="modal-subtitle">{{ .Show.Name }}</span>
             </div>
-            <button class="btn-close-modal" onclick="document.getElementById('modal-container').remove()">
+            <button class="btn-close-modal" onclick="closeModal(null)">
                 <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
             </button>
         </div>
@@ -18,121 +18,130 @@
             <div class="modal-layout">
                 <aside class="modal-sidebar">
                     <nav class="modal-sections">
-                        <button type="button" class="modal-section-item active" data-section="filters">
+                        <button type="button" class="modal-section-item active" data-section="filters" onclick="switchModalSection('filters', this)">
                             <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg>
-                            Filters
+                            Filters & Search
+                        </button>
+                        <button type="button" class="modal-section-item" data-section="aliases" onclick="switchModalSection('aliases', this)">
+                            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path></svg>
+                            Aliases ({{ len .Aliases }})
                         </button>
                     </nav>
                 </aside>
                 <div class="modal-main">
-                <form
-                    id="edit-show-form"
-                    data-show-id="{{ .Show.ID }}"
-                >
-                    <div class="modal-form-group">
-                        <label>Series Type</label>
-                        <select class="modal-select" name="show_type">
-                            <option value="standard" {{ if or (eq .Settings.ShowType "standard") (not .Settings.ShowType) }}selected{{ end }}>Standard (TV Show)</option>
-                            <option value="anime" {{ if eq .Settings.ShowType "anime" }}selected{{ end }}>Anime</option>
-                        </select>
-                        <small class="modal-input-help">Anime mode enables anime release numbering (- 01, S2 - 01) and anime indexer search patterns.</small>
-                    </div>
-
-                    <div class="modal-form-group">
-                        <label>Filter Profile</label>
-                        <select class="modal-select" name="filter_profile_id">
-                            <option value="">Default profile</option>
-                            {{ range .Profiles }}
-                            <option value="{{ .ID }}" {{ if and $.Settings.FilterProfileID (eq (derefInt64 $.Settings.FilterProfileID) .ID) }}selected{{ end }}>{{ .Name }}</option>
-                            {{ end }}
-                        </select>
-                        <small class="modal-input-help">The profile holds the shared gates and search patterns used by default.</small>
-                    </div>
-
-                    <div class="modal-form-group">
-                        <label class="checkbox">
-                            <input type="checkbox" name="use_aliases" value="true" {{ if .Settings.UseAliases }}checked{{ end }}>
-                            <span class="checkbox-box"></span>
-                            <span class="checkbox-title">Use aliases when searching</span>
-                            <small>Search for releases using the show aliases too</small>
-                        </label>
-                    </div>
-
-                    <div class="modal-form-group">
-                        <label class="checkbox">
-                            <input type="checkbox" name="only_latin" value="true" {{ if .Settings.OnlyLatin }}checked{{ end }}>
-                            <span class="checkbox-box"></span>
-                            <span class="checkbox-title">Ignore non-latin aliases</span>
-                            <small>Skip aliases with non-latin characters when searching</small>
-                        </label>
-                    </div>
-
-                    <div class="modal-form-group">
-                        <label>Search Patterns</label>
-                        <div class="pattern-item-default">
-                            <span class="pattern-tag">default</span>
-                            {{ if eq .Settings.ShowType "anime" }}
-                            <code>{alias} - {episode:00}</code>
-                            <small>Searched with anime-style episode numbers</small>
-                            {{ else }}
-                            <code>{alias} S{season:00}E{episode:00}</code>
-                            <small>Always searched first</small>
-                            {{ end }}
-                        </div>
-                        <div id="show-search-pattern-rows">
-                            {{ range .SearchPatterns }}
-                            <div class="search-pattern-row">
-                                <input type="text" class="search-pattern-value" placeholder="{alias} S{season:00}E{episode:00}..." value="{{ . }}">
-                                <button type="button" class="btn-icon-sm btn-delete" title="Remove pattern" onclick="this.closest('.search-pattern-row').remove()">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-trash" viewBox="0 0 16 16"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/><path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/></svg>
-                                </button>
+                    <!-- Filters & Search Section Pane -->
+                    <div class="modal-section-pane" data-section="filters">
+                        <form
+                            id="edit-show-form"
+                            data-show-id="{{ .Show.ID }}"
+                        >
+                            <div class="modal-form-group">
+                                <label>Series Type</label>
+                                <select class="modal-select" name="show_type">
+                                    <option value="standard" {{ if or (eq .Settings.ShowType "standard") (not .Settings.ShowType) }}selected{{ end }}>Standard (TV Show)</option>
+                                    <option value="anime" {{ if eq .Settings.ShowType "anime" }}selected{{ end }}>Anime</option>
+                                </select>
+                                <small class="modal-input-help">Anime mode enables anime release numbering (- 01, S2 - 01) and anime indexer search patterns.</small>
                             </div>
-                            {{ end }}
-                        </div>
-                        <button type="button" class="btn btn-outline btn-sm" onclick="addShowSearchPatternRow()">+ Add Search Pattern</button>
-                        <small class="modal-input-help">Search queries specific to this show. Combined with the profile's search patterns; each becomes a Prowlarr query.</small>
+
+                            <div class="modal-form-group">
+                                <label>Filter Profile</label>
+                                <select class="modal-select" name="filter_profile_id">
+                                    <option value="">Default profile</option>
+                                    {{ range .Profiles }}
+                                    <option value="{{ .ID }}" {{ if and $.Settings.FilterProfileID (eq (derefInt64 $.Settings.FilterProfileID) .ID) }}selected{{ end }}>{{ .Name }}</option>
+                                    {{ end }}
+                                </select>
+                                <small class="modal-input-help">The profile holds the shared gates and search patterns used by default.</small>
+                            </div>
+
+                            <div class="modal-checkbox-group">
+                                <label class="checkbox">
+                                    <input type="checkbox" name="use_aliases" value="true" {{ if .Settings.UseAliases }}checked{{ end }}>
+                                    <span class="checkbox-box"></span>
+                                    <span class="checkbox-title">Use aliases when searching</span>
+                                    <small>Search for releases using the show aliases too</small>
+                                </label>
+
+                                <label class="checkbox">
+                                    <input type="checkbox" name="only_latin" value="true" {{ if .Settings.OnlyLatin }}checked{{ end }}>
+                                    <span class="checkbox-box"></span>
+                                    <span class="checkbox-title">Ignore non-latin aliases</span>
+                                    <small>Skip aliases with non-latin characters when searching</small>
+                                </label>
+                            </div>
+
+                            <div class="modal-form-group">
+                                <label>Search Patterns</label>
+                                <div class="pattern-item-default">
+                                    <span class="pattern-tag">default</span>
+                                    {{ if eq .Settings.ShowType "anime" }}
+                                    <code>{alias} - {episode:00}</code>
+                                    <small>Searched with anime-style episode numbers</small>
+                                    {{ else }}
+                                    <code>{alias} S{season:00}E{episode:00}</code>
+                                    <small>Always searched first</small>
+                                    {{ end }}
+                                </div>
+                                <div id="show-search-pattern-rows">
+                                    {{ range .SearchPatterns }}
+                                    <div class="search-pattern-row">
+                                        <input type="text" class="search-pattern-value" placeholder="{alias} S{season:00}E{episode:00}..." value="{{ . }}">
+                                        <button type="button" class="btn-icon-sm btn-delete" title="Remove pattern" onclick="this.closest('.search-pattern-row').remove()">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-trash" viewBox="0 0 16 16"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/><path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/></svg>
+                                        </button>
+                                    </div>
+                                    {{ end }}
+                                </div>
+                                <button type="button" class="btn btn-outline btn-sm" onclick="addShowSearchPatternRow()">+ Add Search Pattern</button>
+                                <small class="modal-input-help">Search queries specific to this show. Combined with the profile's search patterns; each becomes a Prowlarr query.</small>
+                            </div>
+                        </form>
                     </div>
-                </form>
 
-                <div class="modal-alias-manager">
-                    <h4>Custom Aliases</h4>
-                    {{ if .Aliases }}
-                    <ul class="alias-manage-list">
-                        {{ range $alias := .Aliases }}
-                        <li class="alias-manage-item">
-                            <span>{{ $alias.Alias }}</span>
-                            {{ if eq $alias.Source "user" }}
-                            <button
-                                class="btn-icon-sm btn-delete"
-                                title="Delete alias"
-                                hx-delete="/api/v1/database/show/{{ $.Show.ID }}/alias/{{ $alias.ID }}"
-                                hx-swap="none"
-                                hx-confirm="Delete alias '{{ $alias.Alias }}'?"
-                                hx-on::after-request="showToast(event); if (event.detail.successful) this.closest('.alias-manage-item').remove()"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-trash" viewBox="0 0 16 16"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/><path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/></svg>
-                            </button>
+                    <!-- Aliases Section Pane -->
+                    <div class="modal-section-pane" data-section="aliases" style="display: none;">
+                        <div class="modal-alias-manager">
+                            <h4>Custom Aliases</h4>
+                            <small class="modal-input-help" style="margin-bottom: 0.85rem;">Manage alternate names and synonyms used to match releases during searches.</small>
+                            {{ if .Aliases }}
+                            <ul class="alias-manage-list">
+                                {{ range $alias := .Aliases }}
+                                <li class="alias-manage-item">
+                                    <span class="alias-name" title="{{ $alias.Alias }}">{{ $alias.Alias }}</span>
+                                    {{ if eq $alias.Source "user" }}
+                                    <button
+                                        class="btn-icon-sm btn-delete"
+                                        title="Delete alias"
+                                        hx-delete="/api/v1/database/show/{{ $.Show.ID }}/alias/{{ $alias.ID }}"
+                                        hx-swap="none"
+                                        hx-confirm="Delete alias '{{ $alias.Alias }}'?"
+                                        hx-on::after-request="showToast(event); if (event.detail.successful) this.closest('.alias-manage-item').remove()"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-trash" viewBox="0 0 16 16"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/><path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/></svg>
+                                    </button>
+                                    {{ else }}
+                                    <span class="alias-source">synced</span>
+                                    {{ end }}
+                                </li>
+                                {{ end }}
+                            </ul>
                             {{ else }}
-                            <span class="alias-source">synced</span>
+                            <p class="text-secondary" style="font-size: 0.88rem; margin: 0.5rem 0 1rem;">No aliases yet.</p>
                             {{ end }}
-                        </li>
-                        {{ end }}
-                    </ul>
-                    {{ else }}
-                    <p class="text-secondary">No aliases yet.</p>
-                    {{ end }}
 
-                    <form
-                        class="alias-add-form"
-                        hx-post="/api/v1/database/show/{{ .Show.ID }}/alias"
-                        hx-ext="json-enc-custom"
-                        hx-swap="none"
-                        hx-on::after-request="showToast(event); handleAliasAdded(event)"
-                    >
-                        <input type="text" name="alias" placeholder="Add a custom alias">
-                        <button class="btn btn-outline btn-sm" type="submit">Add</button>
-                    </form>
-                </div>
+                            <form
+                                class="alias-add-form"
+                                hx-post="/api/v1/database/show/{{ .Show.ID }}/alias"
+                                hx-ext="json-enc-custom"
+                                hx-swap="none"
+                                hx-on::after-request="showToast(event); handleAliasAdded(event)"
+                            >
+                                <input type="text" name="alias" placeholder="Add a custom alias..." required>
+                                <button class="btn btn-outline btn-sm" type="submit">Add</button>
+                            </form>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -143,10 +152,34 @@
                 Delete Series
             </button>
             <div class="footer-actions-right">
-                <button class="btn btn-outline" type="button" onclick="document.getElementById('modal-container').remove()">Cancel</button>
+                <button class="btn btn-outline" type="button" onclick="closeModal(null)">Cancel</button>
                 <button class="btn btn-primary" type="submit" form="edit-show-form">Save Changes</button>
             </div>
         </div>
     </div>
 </div>
+
+<script>
+    function closeModal(e) {
+        const modal = document.getElementById('modal-container');
+        if (modal) modal.remove();
+    }
+
+    function switchModalSection(sectionName, btn) {
+        const buttons = document.querySelectorAll('.modal-section-item');
+        buttons.forEach(function(b) { b.classList.remove('active'); });
+        if (btn) btn.classList.add('active');
+
+        const panes = document.querySelectorAll('.modal-section-pane');
+        panes.forEach(function(pane) {
+            if (pane.dataset.section === sectionName) {
+                pane.classList.add('active');
+                pane.style.display = 'block';
+            } else {
+                pane.classList.remove('active');
+                pane.style.display = 'none';
+            }
+        });
+    }
+</script>
 {{ end }}
