@@ -33,6 +33,11 @@ func getHealthScore(t schema.SearchResponse) int {
 	return health
 }
 
-func baseScore(t schema.SearchResponse) int {
+func BaseScore(t schema.SearchResponse) int {
 	return getQualityScore(t) + getHealthScore(t)
 }
+
+func baseScore(t schema.SearchResponse) int {
+	return BaseScore(t)
+}
+

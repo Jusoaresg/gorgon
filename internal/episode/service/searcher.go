@@ -59,7 +59,7 @@ func (s *EpisodeSearcher) SearchEpisodeAliasesById(episode episodeModel.Episode,
 	logger := config.GetLogger()
 	const cooldownDuration = 5 * time.Minute
 
-	patterns := filterService.SearchPatterns(profile)
+	patterns := filterService.SearchPatterns(profile, ctx.ShowType)
 
 	var allResponses []schema.SearchResponse
 

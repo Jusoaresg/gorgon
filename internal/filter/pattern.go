@@ -7,18 +7,22 @@ import (
 	"strings"
 )
 
-// DefaultSearchPattern is the pattern used to build Prowlarr queries when a
-// profile does not define its own search patterns.
-const DefaultSearchPattern = "{alias} S{season:00}E{episode:00}"
+const (
+	DefaultSearchPattern            = "{alias} S{season:00}E{episode:00}"
+	DefaultAnimeSearchPattern       = "{alias} - {episode:00}"
+	DefaultAnimeSeasonSearchPattern = "{alias} S{season} - {episode:00}"
+)
 
 // Context carries the information used to expand placeholders in a pattern.
 // Names should already be normalized before being passed in.
 type Context struct {
-	Show    string
-	Aliases []string
-	Season  int
-	Episode int
+	Show     string
+	Aliases  []string
+	Season   int
+	Episode  int
+	ShowType string
 }
+
 
 // AllNames returns the canonical show name followed by every alias.
 func (c Context) AllNames() []string {

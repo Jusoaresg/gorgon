@@ -13,6 +13,7 @@ import (
 	showModel "github.com/jusoaresg/gorgon/internal/show/model"
 	showAliasRepository "github.com/jusoaresg/gorgon/internal/show_aliases/repository"
 	showSearchPatternsRepository "github.com/jusoaresg/gorgon/internal/show_search_patterns/repository"
+	showSettingsModel "github.com/jusoaresg/gorgon/internal/show_settings/model"
 	showSettingsRepository "github.com/jusoaresg/gorgon/internal/show_settings/repository"
 	"github.com/jusoaresg/gorgon/utils"
 )
@@ -25,6 +26,7 @@ var latinRegex = regexp.MustCompile(`^[a-zA-Z0-9\s\-_!?',.:]+$`)
 // per-show search patterns are combined with the profile's search patterns.
 type EffectiveSettings struct {
 	FilterProfileID *int64
+	ShowType        string
 	UseAliases      bool
 	OnlyLatin       bool
 	SearchPatterns  []string
@@ -40,6 +42,7 @@ func ResolveSettings(db *sqlx.DB, showID int64) (EffectiveSettings, error) {
 
 	settings := EffectiveSettings{
 		FilterProfileID: global.DefaultFilterProfileID,
+		ShowType:        showSettingsModel.ShowTypeStandard,
 		UseAliases:      global.UseAliases,
 		OnlyLatin:       global.OnlyLatin,
 	}
@@ -53,6 +56,9 @@ func ResolveSettings(db *sqlx.DB, showID int64) (EffectiveSettings, error) {
 	} else {
 		if showSettings.FilterProfileID != nil {
 			settings.FilterProfileID = showSettings.FilterProfileID
+		}
+		if showSettings.ShowType != "" {
+			settings.ShowType = showSettings.ShowType
 		}
 		settings.UseAliases = showSettings.UseAliases
 		settings.OnlyLatin = showSettings.OnlyLatin
@@ -124,10 +130,16 @@ func ToProfile(p filterProfileModel.FilterProfile, patterns []filterProfileModel
 }
 
 func BuildContext(db *sqlx.DB, show showModel.Show, season, episode int, settings EffectiveSettings) (filter.Context, error) {
+	showType := settings.ShowType
+	if showType == "" {
+		showType = showSettingsModel.ShowTypeStandard
+	}
+
 	ctx := filter.Context{
-		Show:    utils.NormalizeTitle(show.Name),
-		Season:  season,
-		Episode: episode,
+		Show:     utils.NormalizeTitle(show.Name),
+		Season:   season,
+		Episode:  episode,
+		ShowType: showType,
 	}
 
 	if !settings.UseAliases {
@@ -161,15 +173,42 @@ func BuildContext(db *sqlx.DB, show showModel.Show, season, episode int, setting
 	return ctx, nil
 }
 
-// SearchPatterns returns the search patterns to use for a profile. The
-// default pattern is always prepended (when not already present) so the most
-// precise episode query runs first and can short-circuit the remaining
-// searches via the early-stop in the searcher.
-func SearchPatterns(profile *filter.Profile) []string {
+// SearchPatterns returns the search patterns to use for a profile and show type.
+// If showType is "anime", anime-specific defaults ({alias} - {episode:00}, etc.)
+// are prepended; otherwise the standard S{season:00}E{episode:00} pattern is prepended.
+func SearchPatterns(profile *filter.Profile, showType ...string) []string {
 	var patterns []string
 	if profile != nil {
 		patterns = profile.Search
 	}
+
+	st := showSettingsModel.ShowTypeStandard
+	if len(showType) > 0 && showType[0] != "" {
+		st = showType[0]
+	}
+
+	if st == showSettingsModel.ShowTypeAnime {
+		defaults := []string{
+			filter.DefaultAnimeSearchPattern,
+			filter.DefaultAnimeSeasonSearchPattern,
+			filter.DefaultSearchPattern,
+		}
+		var missing []string
+		for _, d := range defaults {
+			found := false
+			for _, p := range patterns {
+				if p == d {
+					found = true
+					break
+				}
+			}
+			if !found {
+				missing = append(missing, d)
+			}
+		}
+		return append(missing, patterns...)
+	}
+
 	for _, pattern := range patterns {
 		if pattern == filter.DefaultSearchPattern {
 			return patterns

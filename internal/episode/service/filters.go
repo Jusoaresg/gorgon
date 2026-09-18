@@ -14,14 +14,25 @@ type scoredResponse struct {
 	score    int
 }
 
-// FilterAndScoreResponses applies the profile gates to every response,
-// dropping rejected releases and sorting the survivors by score (preferred
-// words + quality + health) descending.
+// FilterAndScoreResponses applies episode matching and the profile gates to every response,
+// dropping releases that do not match the target episode or are rejected,
+// and sorting the survivors by score (preferred words + quality + health) descending.
 func FilterAndScoreResponses(responses []schema.SearchResponse, profile *filter.Profile, ctx filter.Context) []schema.SearchResponse {
 	logger := config.GetLogger()
 
 	var scored []scoredResponse
 	for _, response := range responses {
+		if !filter.MatchEpisode(response.Filename, ctx.Season, ctx.Episode, ctx.ShowType) {
+			logger.Debug(
+				"Release rejected by episode mismatch",
+				slog.String("filename", response.Filename),
+				slog.Int("season", ctx.Season),
+				slog.Int("episode", ctx.Episode),
+				slog.String("show_type", ctx.ShowType),
+			)
+			continue
+		}
+
 		result := filter.Evaluate(profile, ctx, response.Filename)
 		if !result.Passed {
 			logger.Debug(
@@ -49,10 +60,14 @@ func FilterAndScoreResponses(responses []schema.SearchResponse, profile *filter.
 	return filtered
 }
 
-// IsGoodResponse reports whether a response cleared the profile gates and
+// IsGoodResponse reports whether a response cleared the episode match and profile gates and
 // scored high enough to stop searching extra aliases.
 func IsGoodResponse(response schema.SearchResponse, profile *filter.Profile, ctx filter.Context) bool {
 	const goodScore = 60
+
+	if !filter.MatchEpisode(response.Filename, ctx.Season, ctx.Episode, ctx.ShowType) {
+		return false
+	}
 
 	result := filter.Evaluate(profile, ctx, response.Filename)
 	if !result.Passed {
@@ -61,3 +76,4 @@ func IsGoodResponse(response schema.SearchResponse, profile *filter.Profile, ctx
 
 	return result.PreferredScore+baseScore(response) >= goodScore
 }
+

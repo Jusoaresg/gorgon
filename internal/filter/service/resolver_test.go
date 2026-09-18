@@ -259,6 +259,16 @@ func TestSearchPatterns_NoDuplicateDefault(t *testing.T) {
 	assert.Equal(t, []string{"{alias} 4k", "{alias} S{season:00}E{episode:00}"}, patterns)
 }
 
+func TestSearchPatterns_AnimeDefaults(t *testing.T) {
+	patterns := SearchPatterns(nil, "anime")
+	assert.Equal(t, []string{
+		"{alias} - {episode:00}",
+		"{alias} S{season} - {episode:00}",
+		"{alias} S{season:00}E{episode:00}",
+	}, patterns)
+}
+
+
 func TestResolveProfile_DedupesCombinedPatterns(t *testing.T) {
 	db := testutils.GetTestDB()
 	repo := filterProfileRepository.NewFilterProfileRepository(db)
