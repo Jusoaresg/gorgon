@@ -61,6 +61,9 @@ func InitializeRoutes(e *echo.Echo, deps *app.Dependencies) {
 	SetupAppConfigRouter(v1, deps.AppConfig)
 	logger.Debug("App Config route initialized successfully")
 
+	SetupTelegramRouter(v1)
+	logger.Debug("Telegram route initialized successfully")
+
 	e.GET("/swagger.json", func(c echo.Context) error {
 		return c.Blob(http.StatusOK, "application/json", docs.SwaggerJSON)
 	})

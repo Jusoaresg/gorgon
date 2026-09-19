@@ -28,6 +28,11 @@ func InitializeOrUpdateConfigFile() error {
 		QBittorrentDownloadFolder: "downloads",
 		DefaultShowInfoFolder:     "shows",
 		ShowsFolder:               "/home/user/Videos/shows",
+		TelegramBotApiKey:         "",
+		TelegramChatID:            "",
+		TelegramDailySummaryEnabled: true,
+		TelegramDailySummaryTime:    "08:00",
+		TelegramNotifyEmptySummary:  true,
 	}
 
 	if InDocker {

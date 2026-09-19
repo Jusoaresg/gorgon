@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jusoaresg/gorgon/config"
+	telegramService "github.com/jusoaresg/gorgon/external/telegram/service"
 	"github.com/jusoaresg/gorgon/internal/app"
 	"github.com/jusoaresg/gorgon/internal/routes"
 	"github.com/jusoaresg/gorgon/internal/scheduler"
@@ -52,9 +53,11 @@ func main() {
 	routes.InitializeRoutes(e, dependencies)
 	cron.StartDailyUpdate(scheduler.UpdateAllShows)
 
-	// Initialize Crons and Schedulers
+	// Initialize Crons, Schedulers and Listeners
 	scheduler.Start()
 	cron.StartVerifyEpisodeWasDeleted(scheduler.VerifyEpisodeWasDeleted)
+	cron.StartDailySummaryCron(dependencies.DB)
+	telegramService.StartTelegramBotListener(dependencies.DB)
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)

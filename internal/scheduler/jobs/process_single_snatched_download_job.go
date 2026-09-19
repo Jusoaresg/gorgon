@@ -5,6 +5,8 @@ import (
 	"github.com/jusoaresg/gorgon/config"
 	"github.com/jusoaresg/gorgon/external/qbittorrent/schema"
 	"github.com/jusoaresg/gorgon/external/qbittorrent/service"
+	telegramSchema "github.com/jusoaresg/gorgon/external/telegram/schema"
+	telegramService "github.com/jusoaresg/gorgon/external/telegram/service"
 	"github.com/jusoaresg/gorgon/internal/episode/events"
 	"github.com/jusoaresg/gorgon/internal/episode/model"
 	episodeRepository "github.com/jusoaresg/gorgon/internal/episode/repository"
@@ -129,6 +131,21 @@ func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *servic
 		}
 
 		episode.EmitEpisodeTrackingUpdatedEvent(ep.ID, model.TrackingDownloaded, episodeTorrent.InfoUrl)
+
+		go func() {
+			tgService, err := telegramService.NewTelegramService(logger)
+			if err != nil {
+				return
+			}
+			if err := tgService.SendEpisodeDownloaded(telegramSchema.EpisodeDownloadedTemplateInput{
+				ShowName:     show.Name,
+				Season:       ep.Season,
+				Episode:      ep.Number,
+				EpisodeTitle: ep.Name,
+			}); err != nil {
+				logger.Error("failed to send telegram episode downloaded notification", slog.String("error", err.Error()))
+			}
+		}()
 
 		return nil
 	}
