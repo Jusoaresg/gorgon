@@ -97,7 +97,6 @@
                     <button class="btn-action-primary" title="Automatic Search for Wanted Episodes"
                         hx-trigger="click" hx-post="/api/v1/database/show/episode/search/all"
                         hx-vals='{"id": {{ $show.ID }}}' parse-types="true" hx-swap="none"
-                        hx-on::before-request="toast('Searching wanted episodes...', 'info')"
                         hx-on::after-request="showToast(event)">
                         <svg class="action-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
