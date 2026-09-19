@@ -99,42 +99,188 @@
         return container;
     }
 
+    var MAX_VISIBLE_TOASTS = 3;
+
+    function isSearchStartMessage(msg) {
+        if (!msg) return false;
+        var lower = msg.toLowerCase();
+        return lower.indexOf('search started') !== -1 || lower.indexOf('searching') !== -1;
+    }
+
+    function isSearchResultMessage(msg) {
+        if (!msg) return false;
+        var lower = msg.toLowerCase();
+        return lower.indexOf('snatched') !== -1 || lower.indexOf('no results') !== -1 || lower.indexOf('search failed') !== -1;
+    }
+
     function dismissToast(toast) {
+        if (!toast || toast.classList.contains('toast-removing')) return;
+        if (toast._dismissTimer) {
+            clearTimeout(toast._dismissTimer);
+            toast._dismissTimer = null;
+        }
         toast.classList.add('toast-removing');
         toast.addEventListener('animationend', function () {
-            toast.remove();
+            if (toast.parentNode) toast.remove();
         }, { once: true });
+        setTimeout(function () {
+            if (toast.parentNode) toast.remove();
+        }, 250);
+    }
+
+    function scheduleToastDismiss(toast, duration) {
+        if (toast._dismissTimer) clearTimeout(toast._dismissTimer);
+        toast._dismissTimer = setTimeout(function () {
+            dismissToast(toast);
+        }, duration);
     }
 
     function displayToast(message, type) {
+        if (!message) return;
+        type = type || 'info';
+
+        var container = toastContainer();
+
+        // 1. If this is a search started message, dismiss any existing search started toast
+        if (isSearchStartMessage(message)) {
+            var existingSearch = container.querySelectorAll('.toast[data-is-search="true"]:not(.toast-removing)');
+            existingSearch.forEach(function (t) {
+                dismissToast(t);
+            });
+        }
+
+        // 2. If this is a search result message, dismiss any lingering search started toast
+        if (isSearchResultMessage(message)) {
+            var activeSearchToasts = container.querySelectorAll('.toast[data-is-search="true"]:not(.toast-removing)');
+            activeSearchToasts.forEach(function (t) {
+                dismissToast(t);
+            });
+        }
+
+        // 3. Deduplication: If identical message is already visible, increment count badge and refresh timer
+        var visibleToasts = container.querySelectorAll('.toast:not(.toast-removing)');
+        for (var i = 0; i < visibleToasts.length; i++) {
+            var existing = visibleToasts[i];
+            if (existing.dataset.rawMessage === message) {
+                var count = parseInt(existing.dataset.count || '1', 10) + 1;
+                existing.dataset.count = count;
+
+                var badge = existing.querySelector('.toast-badge');
+                if (!badge) {
+                    badge = document.createElement('span');
+                    badge.className = 'toast-badge';
+                    var targetHeader = existing.querySelector('.toast-title') || existing;
+                    targetHeader.appendChild(badge);
+                }
+                badge.textContent = count + 'x';
+
+                var prog = existing.querySelector('.toast-progress');
+                if (prog) {
+                    prog.style.animation = 'none';
+                    void prog.offsetWidth;
+                    prog.style.animation = '';
+                }
+
+                existing.classList.remove('toast-pulse');
+                void existing.offsetWidth; // trigger reflow for pulse animation
+                existing.classList.add('toast-pulse');
+
+                var repeatDuration = type === 'error' ? 5000 : 2800;
+                scheduleToastDismiss(existing, repeatDuration);
+                return;
+            }
+        }
+
+        // 4. Enforce stack limit (max 3 visible toasts)
+        var currentVisible = container.querySelectorAll('.toast:not(.toast-removing)');
+        while (currentVisible.length >= MAX_VISIBLE_TOASTS) {
+            dismissToast(currentVisible[0]);
+            currentVisible = container.querySelectorAll('.toast:not(.toast-removing)');
+        }
+
+        // 5. Create new toast element
+        var autoDuration = type === 'error' ? 5000 : (type === 'success' ? 2800 : 3200);
+
         var toast = document.createElement('div');
-        toast.className = 'toast toast-' + (type || 'info');
+        toast.className = 'toast toast-' + type;
+        toast.dataset.rawMessage = message;
+        toast.style.setProperty('--toast-duration', autoDuration + 'ms');
+        if (isSearchStartMessage(message)) {
+            toast.dataset.isSearch = 'true';
+        }
 
-        var icon = document.createElement('div');
-        icon.innerHTML = TOAST_ICONS[type] || TOAST_ICONS.info;
+        var iconBox = document.createElement('div');
+        iconBox.className = 'toast-icon-box';
+        iconBox.innerHTML = TOAST_ICONS[type] || TOAST_ICONS.info;
 
-        var text = document.createElement('span');
-        text.className = 'toast-message';
-        text.textContent = message;
+        var content = document.createElement('div');
+        content.className = 'toast-content';
+
+        var titleEl = document.createElement('div');
+        titleEl.className = 'toast-title';
+
+        // Split " — " if present (e.g. "S01E03 Pilot — Snatched")
+        var sepIdx = message.indexOf(' — ');
+        if (sepIdx !== -1) {
+            var mainTitle = message.substring(0, sepIdx);
+            var statusPart = message.substring(sepIdx + 3);
+
+            var titleText = document.createElement('span');
+            titleText.textContent = mainTitle;
+            titleEl.appendChild(titleText);
+
+            var statusPill = document.createElement('span');
+            var pillClass = 'toast-status-pill ';
+            var statusLower = statusPart.toLowerCase();
+            if (statusLower.indexOf('snatched') !== -1) {
+                pillClass += 'snatched';
+            } else if (statusLower.indexOf('no results') !== -1 || statusLower.indexOf('not aired') !== -1) {
+                pillClass += 'no-results';
+            } else {
+                pillClass += 'error';
+            }
+            statusPill.className = pillClass;
+            statusPill.textContent = statusPart;
+            titleEl.appendChild(statusPill);
+        } else {
+            titleEl.textContent = message;
+        }
+
+        content.appendChild(titleEl);
 
         var close = document.createElement('button');
         close.type = 'button';
         close.className = 'toast-close';
         close.title = 'Dismiss';
         close.innerHTML = CLOSE_ICON;
-        close.addEventListener('click', function () {
+        close.addEventListener('click', function (e) {
+            e.stopPropagation();
             dismissToast(toast);
         });
 
-        toast.appendChild(icon);
-        toast.appendChild(text);
+        var progress = document.createElement('div');
+        progress.className = 'toast-progress';
+
+        toast.appendChild(iconBox);
+        toast.appendChild(content);
         toast.appendChild(close);
+        toast.appendChild(progress);
 
-        toastContainer().appendChild(toast);
-
-        setTimeout(function () {
+        // Click anywhere on toast to dismiss
+        toast.addEventListener('click', function () {
             dismissToast(toast);
-        }, 4000);
+        });
+
+        // Hover pause / resume
+        toast.addEventListener('mouseenter', function () {
+            if (toast._dismissTimer) clearTimeout(toast._dismissTimer);
+        });
+        toast.addEventListener('mouseleave', function () {
+            scheduleToastDismiss(toast, 2000);
+        });
+
+        container.appendChild(toast);
+        scheduleToastDismiss(toast, autoDuration);
     }
 
     function handleAliasAdded(event) {
