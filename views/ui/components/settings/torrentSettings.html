@@ -1,51 +1,91 @@
 {{ define "torrentSettings" }}
-    <!-- qBittorrent Section -->
+<div class="settings-content">
     <section id="qbittorrent" class="settings-section">
         <div class="section-header">
             <div class="section-icon">
-                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                </svg>
             </div>
             <div>
-                <h3>qBittorrent</h3>
-                <p>Connection settings for your download client</p>
+                <h3>qBittorrent Client</h3>
+                <p>Connection and authentication credentials for torrent downloading</p>
             </div>
         </div>
         <div class="section-body">
-            <form>
+            <form 
+                id="qbittorrent-settings-form"
+                hx-patch="/api/v1/app/config"
+                hx-swap="none"
+                hx-ext="json-enc-custom"
+                parse-types="true"
+                empty-as-null="true"
+                hx-on::after-request="showToast(event)"
+            >
                 <div class="form-row">
                     <div class="form-group">
-                        <label>Host</label>
-                        <input type="text" name="qbittorrentHost" placeholder="https://127.0.0.1" value="{{ .QBittorrentHost }}">
+                        <label>WebUI Host</label>
+                        <input 
+                            type="text" 
+                            id="qbittorrentHost" 
+                            name="qbittorrentHost" 
+                            placeholder="localhost or 192.168.1.10" 
+                            value="{{ .QBittorrentHost }}"
+                        >
+                        <small class="text-secondary" style="display: block; margin-top: 0.35rem; font-size: 0.825rem;">
+                            Hostname or IP address of your qBittorrent WebUI.
+                        </small>
                     </div>
+
                     <div class="form-group">
-                        <label>Port</label>
-                        <input type="number" name="qbittorrentPort" placeholder="8080" value="{{ .QBittorrentPort }}">
+                        <label>WebUI Port</label>
+                        <input 
+                            type="text" 
+                            id="qbittorrentPort" 
+                            name="qbittorrentPort" 
+                            placeholder="9191 or 8080" 
+                            value="{{ .QBittorrentPort }}"
+                        >
+                        <small class="text-secondary" style="display: block; margin-top: 0.35rem; font-size: 0.825rem;">
+                            Default WebUI port (often 8080 or 9191).
+                        </small>
                     </div>
                 </div>
+
                 <div class="form-row">
                     <div class="form-group">
                         <label>Username</label>
-                        <input type="text" name="qbittorrentUsername" placeholder="admin" value="{{ .QBittorrentUsername }}">
+                        <input 
+                            type="text" 
+                            id="qbittorrentUsername" 
+                            name="qbittorrentUsername" 
+                            placeholder="admin" 
+                            value="{{ .QBittorrentUsername }}"
+                        >
                     </div>
+
                     <div class="form-group">
                         <label>Password</label>
-                        <input type="password" name="qbittorrentPassword" placeholder="••••••••" value="{{ .QBittorrentPassword }}" >
+                        <input 
+                            type="password" 
+                            id="qbittorrentPassword" 
+                            name="qbittorrentPassword" 
+                            placeholder="••••••••" 
+                            value="{{ .QBittorrentPassword }}"
+                        >
                     </div>
                 </div>
+
                 <div class="form-actions">
-                    <!-- <button class="btn btn-outline">Test Connection</button> -->
-                    <button 
-                        class="btn btn-primary" 
-                        type="submit" 
-                        hx-patch="/api/v1/app/config"
-                        hx-swap="none"
-                        hx-ext="json-enc-custom"
-                        hx-on::after-request="showToast(event)"
-                        >
-                        Save Changes
+                    <button class="btn btn-primary" type="submit">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="16" height="16">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                        </svg>
+                        Save Client Settings
                     </button>
                 </div>
             </form>
         </div>
     </section>
+</div>
 {{ end }}

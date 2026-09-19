@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -244,15 +245,7 @@ type FilterSettingsData struct {
 }
 
 func (h *Handler) SettingsRoute(c echo.Context) error {
-	return views.Render(c, views.View{
-		Layout:  "layout",
-		Default: "settings",
-		Data: SettingsData{
-			Type:       GorgonSettings,
-			TypeString: strings.Join([]string{"gorgon", "Settings"}, ""),
-		},
-		Styles: []string{"settings.css"},
-	})
+	return c.Redirect(http.StatusSeeOther, "/settings/gorgon")
 }
 
 func (h *Handler) SettingsTypeRoute(c echo.Context) error {

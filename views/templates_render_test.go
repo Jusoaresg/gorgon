@@ -212,6 +212,106 @@ func TestRenderTelegramSettings(t *testing.T) {
 	}
 }
 
+func TestRenderGorgonSettings(t *testing.T) {
+	tmpl := NewTemplate()
+
+	data := schemas.ConfigFile{
+		ShowsFolder:                "/data/shows",
+		DefaultShowInfoFolder:      "shows",
+		QBittorrentDownloadFolder:  "downloads",
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.templates.ExecuteTemplate(&buf, "gorgonSettings", data); err != nil {
+		t.Fatalf("failed to render gorgonSettings: %v", err)
+	}
+
+	for _, want := range []string{
+		"Media & Library Paths",
+		"showsFolder",
+		"/data/shows",
+		"qBittorrentDownloadFolder",
+		"Save Storage Paths",
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("rendered gorgonSettings missing %q", want)
+		}
+	}
+
+	for _, notWant := range []string{
+		"System & Instance",
+		"Automated Schedulers",
+		"defaultShowInfoFolder",
+	} {
+		if bytes.Contains(buf.Bytes(), []byte(notWant)) {
+			t.Errorf("rendered gorgonSettings should not contain %q", notWant)
+		}
+	}
+}
+
+func TestRenderTorrentSettings(t *testing.T) {
+	tmpl := NewTemplate()
+
+	data := schemas.ConfigFile{
+		QBittorrentHost:     "http://localhost",
+		QBittorrentPort:     "9191",
+		QBittorrentUsername: "admin",
+		QBittorrentPassword: "secretpassword",
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.templates.ExecuteTemplate(&buf, "torrentSettings", data); err != nil {
+		t.Fatalf("failed to render torrentSettings: %v", err)
+	}
+
+	for _, want := range []string{
+		"qBittorrent Client",
+		"qbittorrentHost",
+		"http://localhost",
+		"qbittorrentPort",
+		"9191",
+		"qbittorrentUsername",
+		"admin",
+		"qbittorrentPassword",
+		"secretpassword",
+		"Save Client Settings",
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("rendered torrentSettings missing %q", want)
+		}
+	}
+}
+
+func TestRenderProwlarrSettings(t *testing.T) {
+	tmpl := NewTemplate()
+
+	data := schemas.ConfigFile{
+		ProwlarrHost:   "http://prowlarr",
+		ProwlarrPort:   "9696",
+		ProwlarrApiKey: "secret-api-key-123",
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.templates.ExecuteTemplate(&buf, "prowlarrSettings", data); err != nil {
+		t.Fatalf("failed to render prowlarrSettings: %v", err)
+	}
+
+	for _, want := range []string{
+		"Prowlarr Integration",
+		"prowlarrHost",
+		"http://prowlarr",
+		"prowlarrPort",
+		"9696",
+		"prowlarrApiKey",
+		"secret-api-key-123",
+		"Save Prowlarr Settings",
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("rendered prowlarrSettings missing %q", want)
+		}
+	}
+}
+
 func TestRenderEditShowModal(t *testing.T) {
 	tmpl := NewTemplate()
 

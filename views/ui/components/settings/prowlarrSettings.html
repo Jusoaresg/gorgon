@@ -1,42 +1,81 @@
 {{ define "prowlarrSettings" }}
-<section id="prowlarr" class="settings-section">
-    <div class="section-header">
-        <div class="section-icon">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+<div class="settings-content">
+    <section id="prowlarr" class="settings-section">
+        <div class="section-header">
+            <div class="section-icon">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                </svg>
+            </div>
+            <div>
+                <h3>Prowlarr Integration</h3>
+                <p>Connection and authentication settings for your indexer manager</p>
+            </div>
         </div>
-        <div>
-            <h3>Prowlarr</h3>
-            <p>Indexer manager integration</p>
-        </div>
-    </div>
-    <div class="section-body">
-        <form>
-            <div class="form-group">
-                <label>Host</label>
-                <input type="text" name="prowlarrHost" placeholder="https://127.0.0.1" value="{{ .ProwlarrHost }}">
-            </div>
-            <div class="form-group">
-                <label>Port</label>
-                <input type="number" name="prowlarrPort" placeholder="9696" value="{{ .ProwlarrPort }}">
-            </div>
-            <div class="form-group">
-                <label>API Key</label>
-                <input type="password" name="prowlarrApiKey" placeholder="your-api-key-here" value="{{ .ProwlarrApiKey }}">
-            </div>
-            <div class="form-actions">
-                <!-- <button class="btn btn-outline">Test Connection</button> -->
-                <button 
-                    class="btn btn-primary" 
-                    type="submit"
-                    hx-patch="/api/v1/app/config"
-                    hx-swap="none"
-                    hx-ext="json-enc-custom"
-                    hx-on::after-request="showToast(event)"
+        <div class="section-body">
+            <form 
+                id="prowlarr-settings-form"
+                hx-patch="/api/v1/app/config"
+                hx-swap="none"
+                hx-ext="json-enc-custom"
+                parse-types="true"
+                empty-as-null="true"
+                hx-on::after-request="showToast(event)"
+            >
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Host Address</label>
+                        <input 
+                            type="text" 
+                            id="prowlarrHost" 
+                            name="prowlarrHost" 
+                            placeholder="localhost or 192.168.1.10" 
+                            value="{{ .ProwlarrHost }}"
+                        >
+                        <small class="text-secondary" style="display: block; margin-top: 0.35rem; font-size: 0.825rem;">
+                            Hostname or IP address of your Prowlarr instance.
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Port</label>
+                        <input 
+                            type="text" 
+                            id="prowlarrPort" 
+                            name="prowlarrPort" 
+                            placeholder="9696" 
+                            value="{{ .ProwlarrPort }}"
+                        >
+                        <small class="text-secondary" style="display: block; margin-top: 0.35rem; font-size: 0.825rem;">
+                            Standard default port is 9696.
+                        </small>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>API Key</label>
+                    <input 
+                        type="password" 
+                        id="prowlarrApiKey" 
+                        name="prowlarrApiKey" 
+                        placeholder="Paste your Prowlarr API key" 
+                        value="{{ .ProwlarrApiKey }}"
                     >
-                    Save Changes
-                </button>
-            </div>
-        </form>
-    </div>
-</section>
+                    <small class="text-secondary" style="display: block; margin-top: 0.35rem; font-size: 0.825rem;">
+                        Located in Prowlarr under <strong>Settings &rarr; General &rarr; API Key</strong>.
+                    </small>
+                </div>
+
+                <div class="form-actions">
+                    <button class="btn btn-primary" type="submit">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="16" height="16">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                        </svg>
+                        Save Prowlarr Settings
+                    </button>
+                </div>
+            </form>
+        </div>
+    </section>
+</div>
 {{ end }}

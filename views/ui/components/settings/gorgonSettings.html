@@ -1,35 +1,66 @@
 {{ define "gorgonSettings" }}
 <div class="settings-content">
-    <!-- Folders Section -->
-    <!-- 
-    <section id="folders" class="settings-section">
+    <!-- Storage & Paths Section -->
+    <section id="storage-paths" class="settings-section">
         <div class="section-header">
             <div class="section-icon">
-                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                </svg>
             </div>
             <div>
-                <h3>Download Folders</h3>
-                <p>Where your media is stored</p>
+                <h3>Media & Library Paths</h3>
+                <p>Configure storage locations for series, metadata, and staging downloads</p>
             </div>
         </div>
         <div class="section-body">
-            <div class="folder-list">
-                <div class="folder-item">
-                    <span class="folder-path">/data/media/tv</span>
-                    <span class="folder-tag">Primary</span>
-                    <button class="btn-text-danger">&times;</button>
+            <form 
+                id="gorgon-storage-form" 
+                hx-patch="/api/v1/app/config" 
+                hx-ext="json-enc-custom" 
+                parse-types="true" 
+                empty-as-null="true" 
+                hx-swap="none" 
+                hx-on::after-request="showToast(event)"
+            >
+                <div class="form-group">
+                    <label>Shows Library Directory</label>
+                    <input 
+                        type="text" 
+                        id="showsFolder" 
+                        name="showsFolder" 
+                        placeholder="/shows or /home/user/Videos/shows" 
+                        value="{{ .ShowsFolder }}"
+                    >
+                    <small class="text-secondary" style="display: block; margin-top: 0.35rem; font-size: 0.825rem;">
+                        Root folder where TV series, season directories, and video files are organized.
+                    </small>
                 </div>
-                <div class="folder-item">
-                    <span class="folder-path">/data/media/anime</span>
-                    <span class="folder-tag">Anime</span>
-                    <button class="btn-text-danger">&times;</button>
+
+                <div class="form-group">
+                    <label>Download Client Staging Folder</label>
+                    <input 
+                        type="text" 
+                        id="qBittorrentDownloadFolder" 
+                        name="qBittorrentDownloadFolder" 
+                        placeholder="downloads" 
+                        value="{{ .QBittorrentDownloadFolder }}"
+                    >
+                    <small class="text-secondary" style="display: block; margin-top: 0.35rem; font-size: 0.825rem;">
+                        Default destination where completed torrent downloads are staged before import.
+                    </small>
                 </div>
-            </div>
-            <button class="btn btn-outline" style="width: 100%; margin-top: 1rem; border-style: dashed;">
-                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width: 18px;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-                Add Root Folder
-            </button>
+
+                <div class="form-actions">
+                    <button class="btn btn-primary" type="submit">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="16" height="16">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                        </svg>
+                        Save Storage Paths
+                    </button>
+                </div>
+            </form>
         </div>
     </section>
-    -->
+</div>
 {{ end }}
