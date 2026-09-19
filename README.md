@@ -11,6 +11,7 @@ Built in **Go** with a **HTML + HTMX** frontend, Gorgon allows users to automati
 - 📺 Track TV shows with metadata from TVMaze
 - 🔍 Search for episodes via Prowlarr indexers
 - 💾 Automate downloads with qBittorrent integration
+- ✈️ **Telegram notifications & bot**: Instant alerts for snatched and downloaded episodes, scheduled daily summaries, and interactive on-demand commands (`/summary`, `/ping`, `/start`)
 - 🧹 Organize downloads into structured folders with symlinks
 - 🎛️ Keyword-based **filter engine**: profiles with `required` / `rejected` / `preferred` (scored) patterns, per-show search patterns and global defaults
 - 🏷️ Custom aliases per show, searched alongside the canonical name
@@ -192,6 +193,23 @@ Patterns may use placeholders that are replaced with the show's data:
 
 ---
 
+## 🤖 Telegram Bot & Notifications
+
+Gorgon includes native Telegram bot integration for real-time notifications, automated daily schedule overviews, and interactive bot commands (`/summary`, `/ping`, `/start`) without requiring open inbound ports or webhooks.
+
+### 🔔 Event Notifications
+
+- **Episode Snatched**: Alerts when an episode release is grabbed and queued for download in qBittorrent, including indexer info and an inline **🔗 View Release** button.
+- **Episode Downloaded**: Alerts when the download completes and the episode is moved and organized.
+- **Lock-Screen Optimized**: The notification title is placed first (`✅ Downloaded: Show Name` / `📥 Snatched: Show Name`) so mobile and desktop push previews display immediate context.
+
+### 📅 Scheduled Daily Summary
+
+- **Automated Morning Overview**: Sends an automated daily summary of episodes scheduled to air each day at your configured local time (e.g., `08:00`).
+- **Clean Tree Layout**: Displays show titles, episode codes, air times, and download statuses (`✅ Downloaded`, `📥 Snatched`, `⏳ Wanted`, `🔍 Missing`) in a structured tree format.
+
+---
+
 ## 📡 API
 
 Gorgon exposes a REST API under `/api/v1`. Live Swagger documentation is available at:
@@ -207,7 +225,7 @@ The web UI consumes this same API, so every interaction in the interface maps to
 
 **v0.2** — under active development, but usable for personal setups.
 
-Current highlights: the filter engine (profiles, per-show patterns, scoring), custom aliases, live UI updates via WebSocket, and full search → download → organize automation.
+Current highlights: the filter engine (profiles, per-show patterns, scoring), custom aliases, live UI updates via WebSocket, full search → download → organize automation, and native Telegram bot integration.
 
 ---
 
@@ -233,6 +251,8 @@ Here are the next steps planned for Gorgon, focusing on expanding features, impr
   - [X] Implement file-based logging with a dedicated page in the UI for viewing logs.
 
 ### 🔌 Integrations
+- **Notifications & Bots:**
+  - [X] Telegram bot integration (snatch & download push alerts, scheduled daily summary, and interactive bot listener).
 - **Torrent Clients:**
   - [ ] Add support for µTorrent.
   - [ ] Add support for Transmission.
