@@ -18,6 +18,10 @@ type APIService struct {
 }
 
 func NewAPIService(url string, logger *slog.Logger) (a *APIService) {
+	url = strings.TrimSpace(url)
+	if url != "" && !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		url = "http://" + url
+	}
 	return &APIService{
 		Url: url,
 		Client: &http.Client{
