@@ -2,14 +2,18 @@ package config
 
 import (
 	"log/slog"
+
+	"github.com/jusoaresg/gorgon/internal/config/service"
 )
 
 type Dependencies struct {
-	Logger *slog.Logger
+	Logger  *slog.Logger
+	Service service.ConfigServiceInterface
 }
 
-func NewDependencies(logger *slog.Logger) *Dependencies {
+func NewDependencies(svc service.ConfigServiceInterface, logger *slog.Logger) *Dependencies {
 	return &Dependencies{
-		Logger: logger,
+		Logger:  logger,
+		Service: svc,
 	}
 }

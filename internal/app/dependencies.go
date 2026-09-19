@@ -5,12 +5,12 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/jusoaresg/gorgon/config"
+	appConfig "github.com/jusoaresg/gorgon/internal/config"
 	"github.com/jusoaresg/gorgon/internal/downloads"
 	"github.com/jusoaresg/gorgon/internal/episode"
 	"github.com/jusoaresg/gorgon/internal/filter_profile"
 	"github.com/jusoaresg/gorgon/internal/filter_settings"
 	"github.com/jusoaresg/gorgon/internal/indexer"
-	appConfig "github.com/jusoaresg/gorgon/internal/config"
 	"github.com/jusoaresg/gorgon/internal/season"
 	"github.com/jusoaresg/gorgon/internal/show"
 	"github.com/jusoaresg/gorgon/internal/show_aliases"
@@ -42,7 +42,7 @@ func NewDependencies() *Dependencies {
 		Season:         season.NewDependencies(db, logger),
 		Indexer:        indexer.NewDependencies(db, logger),
 		Downloads:      downloads.NewDependencies(db, logger),
-		AppConfig:      appConfig.NewDependencies(logger),
+		AppConfig:      appConfig.NewDependencies(config.GetConfigService(), logger),
 		ShowAliases:    show_aliases.NewDependencies(db, logger),
 		FilterProfile:  filter_profile.NewDependencies(db, logger),
 		ShowSettings:   show_settings.NewDependencies(db, logger),

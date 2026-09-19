@@ -8,6 +8,9 @@ import (
 	"sync"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/jusoaresg/gorgon/internal/config/repository"
+	"github.com/jusoaresg/gorgon/internal/config/service"
+	"github.com/jusoaresg/gorgon/pkg/schemas"
 )
 
 type SafeDB struct {
@@ -24,24 +27,31 @@ var (
 	Port                  string = "8181"
 	safeDB                SafeDB
 	logger                *slog.Logger
+	appConfigService      service.ConfigServiceInterface
 	ProwlarrCooldownCache sync.Map
 )
 
 func Init() error {
 	InDocker = os.Getenv("IN_DOCKER") == "true"
 
-	if baseDirEnv := os.Getenv("GORGON_BASE_DIR"); baseDirEnv != "" {
+	if dataDirEnv := os.Getenv("GORGON_DATA_DIR"); dataDirEnv != "" {
+		ConfigFolder = dataDirEnv
+		BaseDir = dataDirEnv
+	} else if baseDirEnv := os.Getenv("GORGON_BASE_DIR"); baseDirEnv != "" {
 		BaseDir = baseDirEnv
+		ConfigFolder = filepath.Join(BaseDir, "configs")
+	} else if InDocker {
+		ConfigFolder = "/configs"
+		BaseDir = "/"
+	} else {
+		ConfigFolder = "./configs"
+		BaseDir = "."
 	}
+
+	LogsPath = filepath.Join(ConfigFolder, "logs")
 
 	if portEnv := os.Getenv("GORGON_PORT"); portEnv != "" {
 		Port = portEnv
-	}
-
-	if InDocker {
-		ConfigFolder = "/configs"
-		LogsPath = filepath.Join(ConfigFolder, "logs")
-		BaseDir = "/"
 	}
 
 	if err := ReloadFolders(); err != nil {
@@ -59,13 +69,24 @@ func Init() error {
 		Write: &sync.Mutex{},
 	}
 
-	InitializeOrUpdateConfigFile()
+	// Initialize SQLite Key-Value AppConfig Repository & Service
+	appConfigRepo := repository.NewAppConfigRepository(dbInstance, InDocker)
+	svc, err := service.NewConfigService(appConfigRepo, logger)
+	if err != nil {
+		return fmt.Errorf("failed to initialize config service: %w", err)
+	}
+	appConfigService = svc
+
+	// Migrate legacy config.json if present
+	legacyConfigPath := filepath.Join(ConfigFolder, "config.json")
+	if err := appConfigService.MigrateLegacyConfigFile(legacyConfigPath); err != nil {
+		logger.Warn("Failed to run legacy config migration", slog.String("error", err.Error()))
+	}
 
 	return nil
 }
 
 func ReloadFolders() error {
-	ConfigFolder = filepath.Join(BaseDir, "configs")
 	LogsPath = filepath.Join(ConfigFolder, "logs")
 
 	dirs := []string{
@@ -75,7 +96,6 @@ func ReloadFolders() error {
 	}
 
 	for _, dir := range dirs {
-		//TODO: Logging creating necessary directories
 		err := os.MkdirAll(dir, 0755)
 		if err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
@@ -104,4 +124,19 @@ func GetSafeDB() *SafeDB {
 		panic("database is not initialized")
 	}
 	return &safeDB
+}
+
+func GetAppConfig() schemas.ConfigFile {
+	if appConfigService != nil {
+		return appConfigService.Get()
+	}
+	return repository.DefaultConfigFile(InDocker)
+}
+
+func GetConfigService() service.ConfigServiceInterface {
+	return appConfigService
+}
+
+func SetConfigService(svc service.ConfigServiceInterface) {
+	appConfigService = svc
 }
