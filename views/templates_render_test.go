@@ -14,6 +14,7 @@ import (
 	showModel "github.com/jusoaresg/gorgon/internal/show/model"
 	showAliasModel "github.com/jusoaresg/gorgon/internal/show_aliases/model"
 	showSettingsModel "github.com/jusoaresg/gorgon/internal/show_settings/model"
+	"github.com/jusoaresg/gorgon/pkg/schemas"
 )
 
 type renderData struct {
@@ -163,6 +164,47 @@ func TestRenderFilterSettings(t *testing.T) {
 		"Placeholder reference",
 		"{season:00}",
 		"{absolute}",
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("rendered output missing %q", want)
+		}
+	}
+}
+
+func TestRenderTelegramSettings(t *testing.T) {
+	tmpl := NewTemplate()
+
+	data := schemas.ConfigFile{
+		TelegramBotApiKey:           "test-token-123",
+		TelegramChatID:              "987654321",
+		TelegramDailySummaryEnabled: true,
+		TelegramDailySummaryTime:    "08:00",
+		TelegramNotifyEmptySummary:  false,
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.templates.ExecuteTemplate(&buf, "telegramSettings", data); err != nil {
+		t.Fatalf("failed to render telegramSettings: %v", err)
+	}
+
+	for _, want := range []string{
+		"Telegram",
+		"Bot API Token",
+		"telegramBotApiKey",
+		"test-token-123",
+		"Chat ID",
+		"telegramChatID",
+		"987654321",
+		"Auto-Detect",
+		"/api/v1/telegram/detect-chat-id",
+		"Daily Summary",
+		"telegramDailySummaryEnabled",
+		"telegramDailySummaryTime",
+		"telegramNotifyEmptySummary",
+		"Test Notification",
+		"/summary",
+		"/today",
+		"Save Changes",
 	} {
 		if !bytes.Contains(buf.Bytes(), []byte(want)) {
 			t.Errorf("rendered output missing %q", want)

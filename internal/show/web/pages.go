@@ -220,6 +220,7 @@ const (
 	GorgonSettings SettingType = iota
 	ProwlarrSettings
 	TorrentSettings
+	TelegramSettings
 	FilterSettings
 )
 
@@ -227,6 +228,7 @@ var SettingTypes = map[string]SettingType{
 	"gorgon":   GorgonSettings,
 	"prowlarr": ProwlarrSettings,
 	"torrent":  TorrentSettings,
+	"telegram": TelegramSettings,
 	"filter":   FilterSettings,
 }
 
