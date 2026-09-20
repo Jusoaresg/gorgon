@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/jusoaresg/gorgon/config"
 	"github.com/jusoaresg/gorgon/external/telegram/schema"
 )
 
@@ -20,7 +21,12 @@ type dailyEpisodeRow struct {
 }
 
 func GetDailySummary(db *sqlx.DB, now time.Time) (schema.DailySummaryTemplateInput, error) {
-	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	loc := config.GetAppLocation()
+	if loc == nil {
+		loc = time.Local
+	}
+	now = now.In(loc)
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 	dayEnd := dayStart.AddDate(0, 0, 1)
 
 	var rows []dailyEpisodeRow
@@ -42,7 +48,7 @@ func GetDailySummary(db *sqlx.DB, now time.Time) (schema.DailySummaryTemplateInp
 	for _, row := range rows {
 		airTimeStr := ""
 		if row.AirStamp != 0 {
-			airTimeStr = time.Unix(row.AirStamp, 0).Format("15:04")
+			airTimeStr = time.Unix(row.AirStamp, 0).In(loc).Format("15:04")
 		}
 
 		summaryEpisodes = append(summaryEpisodes, schema.DailySummaryEpisode{
