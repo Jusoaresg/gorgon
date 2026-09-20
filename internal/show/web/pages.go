@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -123,27 +124,35 @@ func (h *Handler) AddShowConfigRoute(c echo.Context) error {
 	})
 }
 
-func computeWeekStart(weekParam string) time.Time {
-	now := time.Now().UTC()
+func computeWeekStart(weekParam string, loc *time.Location) time.Time {
+	if loc == nil {
+		loc = time.Local
+	}
+	now := time.Now().In(loc)
 	if weekParam != "" {
-		parsed, err := time.Parse("2006-01-02", weekParam)
+		parsed, err := time.ParseInLocation("2006-01-02", weekParam, loc)
 		if err == nil {
-			return time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, time.UTC)
+			return time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, loc)
 		}
 	}
-	return mondayOfWeek(now)
+	return mondayOfWeek(now, loc)
 }
 
-func mondayOfWeek(now time.Time) time.Time {
-	daysSinceMonday := int(now.Weekday()+6) % 7
-	monday := now.AddDate(0, 0, -daysSinceMonday)
-	return time.Date(monday.Year(), monday.Month(), monday.Day(), 0, 0, 0, 0, time.UTC)
+func mondayOfWeek(now time.Time, loc *time.Location) time.Time {
+	if loc == nil {
+		loc = time.Local
+	}
+	nowInLoc := now.In(loc)
+	daysSinceMonday := int(nowInLoc.Weekday()+6) % 7
+	monday := nowInLoc.AddDate(0, 0, -daysSinceMonday)
+	return time.Date(monday.Year(), monday.Month(), monday.Day(), 0, 0, 0, 0, loc)
 }
 
 func (h *Handler) computeCalendarData(weekParam string) (CalendarData, error) {
-	weekStart := computeWeekStart(weekParam)
+	loc := config.GetAppLocation()
+	weekStart := computeWeekStart(weekParam, loc)
 	weekEnd := weekStart.AddDate(0, 0, 7)
-	today := time.Now().UTC().Format("2006-01-02")
+	today := time.Now().In(loc).Format("2006-01-02")
 
 	var episodes []CalendarEpisode
 	err := h.DB.Select(&episodes, `
@@ -170,14 +179,15 @@ func (h *Handler) computeCalendarData(weekParam string) (CalendarData, error) {
 	}
 
 	for _, ep := range episodes {
-		t := time.Unix(ep.AirStamp, 0).UTC()
-		dayIdx := int(t.Sub(weekStart) / (24 * time.Hour))
+		t := time.Unix(ep.AirStamp, 0).In(loc)
+		epDay := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
+		dayIdx := int(math.Round(epDay.Sub(weekStart).Hours() / 24.0))
 		if dayIdx >= 0 && dayIdx < 7 {
 			days[dayIdx].Episodes = append(days[dayIdx].Episodes, ep)
 		}
 	}
 
-	currentWeekStart := computeWeekStart("")
+	currentWeekStart := computeWeekStart("", loc)
 	isCurrentWeek := weekStart.Equal(currentWeekStart)
 
 	return CalendarData{
@@ -399,7 +409,7 @@ func (h *Handler) LogsRoute(c echo.Context) error {
 	levelFilter := c.QueryParam("level")
 	selectedFile := c.QueryParam("file")
 
-	defaultFile := fmt.Sprintf("gorgon-%s.log", time.Now().In(time.FixedZone("BRT", -3*60*60)).Format("2006-01-02"))
+	defaultFile := fmt.Sprintf("gorgon-%s.log", time.Now().In(config.GetAppLocation()).Format("2006-01-02"))
 	if selectedFile == "" || !isValidLogFileName(selectedFile) {
 		selectedFile = defaultFile
 	}
@@ -443,7 +453,7 @@ func (h *Handler) LogsRoute(c echo.Context) error {
 			info, _ := f.Info()
 			size := info.Size()
 			sizeStr := formatSize(size)
-			isCurrent := name == fmt.Sprintf("gorgon-%s.log", time.Now().In(time.FixedZone("BRT", -3*60*60)).Format("2006-01-02"))
+			isCurrent := name == fmt.Sprintf("gorgon-%s.log", time.Now().In(config.GetAppLocation()).Format("2006-01-02"))
 			if strings.HasSuffix(name, ".gz") {
 				isCurrent = false
 			}

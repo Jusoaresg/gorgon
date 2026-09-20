@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
+	_ "time/tzdata"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/jusoaresg/gorgon/internal/config/repository"
@@ -139,4 +141,18 @@ func GetConfigService() service.ConfigServiceInterface {
 
 func SetConfigService(svc service.ConfigServiceInterface) {
 	appConfigService = svc
+}
+
+func GetAppLocation() *time.Location {
+	cfg := GetAppConfig()
+	if cfg.Timezone != "" {
+		if loc, err := time.LoadLocation(cfg.Timezone); err == nil && loc != nil {
+			return loc
+		}
+	}
+	return time.Local
+}
+
+func GetAppTimezoneName() string {
+	return GetAppLocation().String()
 }

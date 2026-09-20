@@ -232,6 +232,9 @@ func TestRenderGorgonSettings(t *testing.T) {
 		"/data/shows",
 		"qBittorrentDownloadFolder",
 		"Save Storage Paths",
+		"Localization & Timezone",
+		"timezone",
+		"Save Timezone",
 	} {
 		if !bytes.Contains(buf.Bytes(), []byte(want)) {
 			t.Errorf("rendered gorgonSettings missing %q", want)

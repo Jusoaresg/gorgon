@@ -24,6 +24,8 @@ type ConfigFile struct {
 	TelegramDailySummaryEnabled bool   `json:"telegramDailySummaryEnabled"`
 	TelegramDailySummaryTime    string `json:"telegramDailySummaryTime"`
 	TelegramNotifyEmptySummary  bool   `json:"telegramNotifyEmptySummary"`
+
+	Timezone string `json:"timezone"`
 }
 
 type FlexBool bool
@@ -65,6 +67,8 @@ type UpdateConfigInput struct {
 	TelegramDailySummaryEnabled *FlexBool `json:"telegramDailySummaryEnabled"`
 	TelegramDailySummaryTime    *string   `json:"telegramDailySummaryTime"`
 	TelegramNotifyEmptySummary  *FlexBool `json:"telegramNotifyEmptySummary"`
+
+	Timezone *string `json:"timezone"`
 }
 
 func setString(dst *string, src *string) {
@@ -105,4 +109,6 @@ func (c *ConfigFile) Apply(input *UpdateConfigInput) {
 	setFlexBool(&c.TelegramDailySummaryEnabled, input.TelegramDailySummaryEnabled)
 	setString(&c.TelegramDailySummaryTime, input.TelegramDailySummaryTime)
 	setFlexBool(&c.TelegramNotifyEmptySummary, input.TelegramNotifyEmptySummary)
+
+	setString(&c.Timezone, input.Timezone)
 }

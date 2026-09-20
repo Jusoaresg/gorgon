@@ -68,9 +68,11 @@ func TestUpdateAppConfig_Success(t *testing.T) {
 
 	newHost := "http://localhost:9696"
 	newTime := "09:00"
+	newTz := "America/Sao_Paulo"
 	updateInput := schemas.UpdateConfigInput{
 		ProwlarrHost:             &newHost,
 		TelegramDailySummaryTime: &newTime,
+		Timezone:                 &newTz,
 	}
 	requestJSON, err := json.Marshal(updateInput)
 	require.NoError(t, err)
@@ -92,4 +94,12 @@ func TestUpdateAppConfig_Success(t *testing.T) {
 	err = h.GetAppConfig(cGet)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, recGet.Result().StatusCode)
+
+	var resp struct {
+		Message string             `json:"message"`
+		Data    schemas.ConfigFile `json:"data"`
+	}
+	err = json.Unmarshal(recGet.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "America/Sao_Paulo", resp.Data.Timezone)
 }

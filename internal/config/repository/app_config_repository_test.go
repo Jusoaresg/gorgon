@@ -48,6 +48,7 @@ func TestAppConfigRepository_SaveAndGetConfig(t *testing.T) {
 		TelegramDailySummaryEnabled: false,
 		TelegramDailySummaryTime:    "10:30",
 		TelegramNotifyEmptySummary:  false,
+		Timezone:                    "America/Sao_Paulo",
 	}
 
 	err := repo.SaveConfig(cfg)
@@ -67,6 +68,7 @@ func TestAppConfigRepository_SaveAndGetConfig(t *testing.T) {
 	assert.False(t, retrieved.TelegramDailySummaryEnabled)
 	assert.Equal(t, "10:30", retrieved.TelegramDailySummaryTime)
 	assert.False(t, retrieved.TelegramNotifyEmptySummary)
+	assert.Equal(t, "America/Sao_Paulo", retrieved.Timezone)
 
 	// Verify categories in app_settings table
 	var rows []repository.SettingRow
@@ -83,6 +85,7 @@ func TestAppConfigRepository_SaveAndGetConfig(t *testing.T) {
 	assert.Equal(t, "prowlarr", categoryMap[repository.KeyProwlarrHost])
 	assert.Equal(t, "telegram", categoryMap[repository.KeyTelegramBotApiKey])
 	assert.Equal(t, "telegram", categoryMap[repository.KeyTelegramChatID])
+	assert.Equal(t, "general", categoryMap[repository.KeyGeneralTimezone])
 	assert.Equal(t, "qbittorrent", categoryMap[repository.KeyQBittorrentHost])
 	assert.Equal(t, "storage", categoryMap[repository.KeyStorageShowsFolder])
 }

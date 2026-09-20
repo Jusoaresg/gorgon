@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"math"
 	"strings"
 	"time"
 
+	"github.com/jusoaresg/gorgon/config"
 	"github.com/jusoaresg/gorgon/internal/episode/model"
 	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
 	"github.com/labstack/echo/v4"
@@ -116,68 +118,11 @@ func NewTemplate() *Template {
 			}
 			return dict, nil
 		},
-		"airDate": func(e model.Episode) string { return e.AirDate() },
-		"nextEpisodeLabel": func(episodes []episodeModel.Episode, status string) string {
-			if strings.EqualFold(status, "Ended") {
-				return "Ended"
-			}
-			now := time.Now().Unix()
-			var nextEp *episodeModel.Episode
-			var nextTime int64 = 1<<63 - 1
-
-			for i := range episodes {
-				if episodes[i].AirStamp > now && episodes[i].AirStamp < nextTime {
-					nextTime = episodes[i].AirStamp
-					nextEp = &episodes[i]
-				}
-			}
-
-			if nextEp != nil {
-				t := time.Unix(nextEp.AirStamp, 0)
-				days := int(time.Until(t).Hours() / 24)
-				if days == 0 {
-					return "Today"
-				} else if days == 1 {
-					return "Tomorrow"
-				} else if days < 7 {
-					return t.Format("Mon")
-				}
-				return t.Format("Jan 02")
-			}
-
-			return "TBD"
+		"airDate": func(e model.Episode) string {
+			return e.AirDateIn(config.GetAppLocation())
 		},
-		"nextEpisodeInfo": func(episodes []episodeModel.Episode, status string) string {
-			if strings.EqualFold(status, "Ended") {
-				return "Ended"
-			}
-			now := time.Now().Unix()
-			var nextEp *episodeModel.Episode
-			var nextTime int64 = 1<<63 - 1
-
-			for i := range episodes {
-				if episodes[i].AirStamp > now && episodes[i].AirStamp < nextTime {
-					nextTime = episodes[i].AirStamp
-					nextEp = &episodes[i]
-				}
-			}
-
-			if nextEp != nil {
-				t := time.Unix(nextEp.AirStamp, 0)
-				days := int(time.Until(t).Hours() / 24)
-				epCode := fmt.Sprintf("S%02dE%02d", nextEp.Season, nextEp.Number)
-				if days <= 0 {
-					return fmt.Sprintf("%s • Today", epCode)
-				} else if days == 1 {
-					return fmt.Sprintf("%s • Tomorrow", epCode)
-				} else if days < 7 {
-					return fmt.Sprintf("%s • %s", epCode, t.Format("Mon"))
-				}
-				return fmt.Sprintf("%s • %s", epCode, t.Format("Jan 02"))
-			}
-
-			return "TBD"
-		},
+		"nextEpisodeLabel": formatNextEpisodeLabel,
+		"nextEpisodeInfo":  formatNextEpisodeInfo,
 		"primaryGenre": func(genresStr string, fallbackType string) string {
 			if genresStr != "" {
 				parts := strings.Split(genresStr, ",")
@@ -190,11 +135,12 @@ func NewTemplate() *Template {
 			}
 			return "Series"
 		},
-		"airTimeUnix": func(airstamp int64) string {
-			return time.Unix(airstamp, 0).UTC().Format("15:04")
-		},
+		"airTimeUnix": formatAirTimeUnix,
 		"nowDate": func() string {
-			return time.Now().UTC().Format("2006-01-02")
+			return time.Now().In(config.GetAppLocation()).Format("2006-01-02")
+		},
+		"appTimezoneName": func() string {
+			return config.GetAppTimezoneName()
 		},
 		"formatBytes": func(value any) string {
 			var size float64
@@ -363,3 +309,97 @@ func formatSizeBytes(size float64) string {
 	}
 	return fmt.Sprintf("%.1f %cB", size/div, "KMGTPE"[exp])
 }
+
+func formatAirTimeUnix(airstamp int64) string {
+	if airstamp == 0 {
+		return ""
+	}
+	return time.Unix(airstamp, 0).In(config.GetAppLocation()).Format("15:04")
+}
+
+func findNextEpisodeAndDaysDiff(episodes []episodeModel.Episode, now time.Time, loc *time.Location) (*episodeModel.Episode, int, bool) {
+	if loc == nil {
+		loc = time.Local
+	}
+	nowInLoc := now.In(loc)
+	nowUnix := nowInLoc.Unix()
+
+	var nextEp *episodeModel.Episode
+	var nextTime int64 = 1<<63 - 1
+
+	for i := range episodes {
+		if episodes[i].AirStamp > nowUnix && episodes[i].AirStamp < nextTime {
+			nextTime = episodes[i].AirStamp
+			nextEp = &episodes[i]
+		}
+	}
+
+	if nextEp == nil {
+		return nil, 0, false
+	}
+
+	todayMidnight := time.Date(nowInLoc.Year(), nowInLoc.Month(), nowInLoc.Day(), 0, 0, 0, 0, loc)
+	epTime := time.Unix(nextEp.AirStamp, 0).In(loc)
+	epMidnight := time.Date(epTime.Year(), epTime.Month(), epTime.Day(), 0, 0, 0, 0, loc)
+	daysDiff := int(math.Round(epMidnight.Sub(todayMidnight).Hours() / 24.0))
+
+	return nextEp, daysDiff, true
+}
+
+func formatNextEpisodeLabelAt(episodes []episodeModel.Episode, status string, now time.Time, loc *time.Location) string {
+	if strings.EqualFold(status, "Ended") {
+		return "Ended"
+	}
+	if loc == nil {
+		loc = time.Local
+	}
+	nextEp, daysDiff, found := findNextEpisodeAndDaysDiff(episodes, now, loc)
+	if !found {
+		return "TBD"
+	}
+
+	epTime := time.Unix(nextEp.AirStamp, 0).In(loc)
+	if daysDiff <= 0 {
+		return "Today"
+	} else if daysDiff == 1 {
+		return "Tomorrow"
+	} else if daysDiff < 7 {
+		return epTime.Format("Mon")
+	}
+	return epTime.Format("Jan 02")
+}
+
+func formatNextEpisodeInfoAt(episodes []episodeModel.Episode, status string, now time.Time, loc *time.Location) string {
+	if strings.EqualFold(status, "Ended") {
+		return "Ended"
+	}
+	if loc == nil {
+		loc = time.Local
+	}
+	nextEp, daysDiff, found := findNextEpisodeAndDaysDiff(episodes, now, loc)
+	if !found {
+		return "TBD"
+	}
+
+	epTime := time.Unix(nextEp.AirStamp, 0).In(loc)
+	epCode := fmt.Sprintf("S%02dE%02d", nextEp.Season, nextEp.Number)
+	if daysDiff <= 0 {
+		return fmt.Sprintf("%s • Today", epCode)
+	} else if daysDiff == 1 {
+		return fmt.Sprintf("%s • Tomorrow", epCode)
+	} else if daysDiff < 7 {
+		return fmt.Sprintf("%s • %s", epCode, epTime.Format("Mon"))
+	}
+	return fmt.Sprintf("%s • %s", epCode, epTime.Format("Jan 02"))
+}
+
+func formatNextEpisodeLabel(episodes []episodeModel.Episode, status string) string {
+	loc := config.GetAppLocation()
+	return formatNextEpisodeLabelAt(episodes, status, time.Now(), loc)
+}
+
+func formatNextEpisodeInfo(episodes []episodeModel.Episode, status string) string {
+	loc := config.GetAppLocation()
+	return formatNextEpisodeInfoAt(episodes, status, time.Now(), loc)
+}
+

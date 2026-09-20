@@ -16,7 +16,7 @@ func StartDailySummaryCron(db *sqlx.DB) {
 		var lastSentDate string
 
 		for {
-			now := time.Now()
+			now := time.Now().In(config.GetAppLocation())
 			currentDate := now.Format("2006-01-02")
 			currentTime := now.Format("15:04")
 

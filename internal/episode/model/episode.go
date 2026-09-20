@@ -47,24 +47,39 @@ func (e *Episode) Create(
 	}
 }
 
+func (e *Episode) AirDateIn(loc *time.Location) string {
+	if e.AirStamp == 0 {
+		return ""
+	}
+	if loc == nil {
+		loc = time.Local
+	}
+	return time.Unix(e.AirStamp, 0).In(loc).Format("2006-01-02")
+}
+
 func (e *Episode) AirDate() string {
-	t := time.Unix(e.AirStamp, 0).UTC()
-	return t.Format("2006-01-02")
+	return e.AirDateIn(time.Local)
+}
+
+func (e *Episode) AirTimeIn(loc *time.Location) string {
+	if e.AirStamp == 0 {
+		return ""
+	}
+	if loc == nil {
+		loc = time.Local
+	}
+	return time.Unix(e.AirStamp, 0).In(loc).Format("15:04")
 }
 
 func (e *Episode) AirTime() string {
-	t := time.Unix(e.AirStamp, 0).UTC()
-	return t.Format("15:04")
+	return e.AirTimeIn(time.Local)
 }
 
 func (e *Episode) HasAired() bool {
 	if e.AirStamp == 0 {
 		return false
 	}
-	airTime := time.Unix(e.AirStamp, 0).UTC()
-
-	// If the airTime is before or equal the time now, then it has been aired
-	return !airTime.After(time.Now().UTC())
+	return e.AirStamp <= time.Now().Unix()
 }
 
 func (e *Episode) SetNotInstalled() {

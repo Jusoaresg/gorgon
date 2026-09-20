@@ -23,9 +23,11 @@ const (
 	KeyTelegramDailySummaryEnabled = "telegram.daily_summary_enabled"
 	KeyTelegramDailySummaryTime    = "telegram.daily_summary_time"
 	KeyTelegramNotifyEmptySummary  = "telegram.notify_empty_summary"
+	KeyGeneralTimezone             = "general.timezone"
 )
 
 const (
+	CategoryGeneral     = "general"
 	CategoryProwlarr    = "prowlarr"
 	CategoryQBittorrent = "qbittorrent"
 	CategoryStorage     = "storage"
@@ -48,6 +50,7 @@ var KeyCategoryMap = map[string]string{
 	KeyTelegramDailySummaryEnabled: CategoryTelegram,
 	KeyTelegramDailySummaryTime:    CategoryTelegram,
 	KeyTelegramNotifyEmptySummary:  CategoryTelegram,
+	KeyGeneralTimezone:             CategoryGeneral,
 }
 
 type SettingRow struct {
@@ -157,6 +160,9 @@ func (r *AppConfigRepository) GetConfig() (*schemas.ConfigFile, error) {
 	if val, ok := m[KeyTelegramNotifyEmptySummary]; ok {
 		cfg.TelegramNotifyEmptySummary = parseBool(val, true)
 	}
+	if val, ok := m[KeyGeneralTimezone]; ok {
+		cfg.Timezone = val
+	}
 
 	return &cfg, nil
 }
@@ -178,6 +184,7 @@ func (r *AppConfigRepository) SaveConfig(config *schemas.ConfigFile) error {
 		KeyTelegramDailySummaryEnabled: strconv.FormatBool(config.TelegramDailySummaryEnabled),
 		KeyTelegramDailySummaryTime:    config.TelegramDailySummaryTime,
 		KeyTelegramNotifyEmptySummary:  strconv.FormatBool(config.TelegramNotifyEmptySummary),
+		KeyGeneralTimezone:             config.Timezone,
 	}
 
 	tx, err := r.db.Beginx()
@@ -249,6 +256,7 @@ func DefaultConfigFile(inDocker bool) schemas.ConfigFile {
 		TelegramDailySummaryEnabled: true,
 		TelegramDailySummaryTime:    "08:00",
 		TelegramNotifyEmptySummary:  true,
+		Timezone:                    "",
 	}
 
 	if inDocker {

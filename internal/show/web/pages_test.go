@@ -43,7 +43,7 @@ func TestMondayOfWeek(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := mondayOfWeek(tc.now)
+			got := mondayOfWeek(tc.now, tc.now.Location())
 			if !got.Equal(tc.expected) {
 				t.Errorf("mondayOfWeek(%s) = %s, want %s", tc.now, got, tc.expected)
 			}
@@ -52,7 +52,7 @@ func TestMondayOfWeek(t *testing.T) {
 }
 
 func TestMondayOfWeekBuildsMondayToSunday(t *testing.T) {
-	monday := mondayOfWeek(time.Date(2026, 8, 1, 2, 0, 0, 0, time.UTC))
+	monday := mondayOfWeek(time.Date(2026, 8, 1, 2, 0, 0, 0, time.UTC), time.UTC)
 	if got, want := monday.Weekday(), time.Monday; got != want {
 		t.Fatalf("week start = %s, want %s", got, want)
 	}
@@ -66,18 +66,34 @@ func TestMondayOfWeekBuildsMondayToSunday(t *testing.T) {
 }
 
 func TestComputeWeekStartWithParam(t *testing.T) {
-	got := computeWeekStart("2026-08-01")
+	got := computeWeekStart("2026-08-01", time.UTC)
 	want := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	if !got.Equal(want) {
-		t.Errorf("computeWeekStart(\"2026-08-01\") = %s, want %s", got, want)
+		t.Errorf("computeWeekStart(\"2026-08-01\", time.UTC) = %s, want %s", got, want)
 	}
 }
 
 func TestComputeWeekStartCurrentWeek(t *testing.T) {
-	got := computeWeekStart("")
-	want := mondayOfWeek(time.Now().UTC())
+	got := computeWeekStart("", time.UTC)
+	want := mondayOfWeek(time.Now().UTC(), time.UTC)
 	if !got.Equal(want) {
-		t.Errorf("computeWeekStart(\"\") = %s, want %s", got, want)
+		t.Errorf("computeWeekStart(\"\", time.UTC) = %s, want %s", got, want)
+	}
+}
+
+func TestComputeWeekStartTimezone(t *testing.T) {
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		t.Skip("America/Sao_Paulo not available")
+	}
+	// Sunday night in Brazil: 2026-09-20 22:00 BRT
+	// In UTC, this is 2026-09-21 01:00 (Monday UTC).
+	// In Brazil, Sunday is part of the week starting on Monday 2026-09-14!
+	sundayNightBRT := time.Date(2026, 9, 20, 22, 0, 0, 0, loc)
+	mondayBRT := mondayOfWeek(sundayNightBRT, loc)
+	expectedMonday := time.Date(2026, 9, 14, 0, 0, 0, 0, loc)
+	if !mondayBRT.Equal(expectedMonday) {
+		t.Errorf("mondayOfWeek on Sunday night in BRT = %s, want %s", mondayBRT, expectedMonday)
 	}
 }
 
