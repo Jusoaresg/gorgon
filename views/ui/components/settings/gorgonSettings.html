@@ -62,5 +62,84 @@
             </form>
         </div>
     </section>
+
+    <!-- Localization & Timezone Section -->
+    <section id="localization-timezone" class="settings-section">
+        <div class="section-header">
+            <div class="section-icon">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="10" stroke-width="2"></circle>
+                    <polyline points="12 6 12 12 16 14" stroke-width="2" stroke-linecap="round"></polyline>
+                </svg>
+            </div>
+            <div>
+                <h3>Localization & Timezone</h3>
+                <p>Configure the timezone for release dates, schedule times, badges, and the calendar</p>
+            </div>
+        </div>
+        <div class="section-body">
+            <form 
+                id="gorgon-timezone-form" 
+                hx-patch="/api/v1/app/config" 
+                hx-ext="json-enc-custom" 
+                parse-types="true" 
+                empty-as-null="true" 
+                hx-swap="none" 
+                hx-on::after-request="showToast(event)"
+            >
+                <div class="form-group">
+                    <label>Application Timezone</label>
+                    <div class="tz-select-wrapper" id="tz-select-wrapper" data-current-tz="{{ .Timezone }}" data-system-tz="{{ appTimezoneName }}">
+                        <input type="hidden" name="timezone" id="timezone" value="{{ .Timezone }}">
+                        <button type="button" class="tz-select-trigger" id="tz-select-trigger" aria-haspopup="listbox" aria-expanded="false">
+                            <div class="tz-trigger-content">
+                                <svg class="tz-trigger-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <circle cx="12" cy="12" r="10" stroke-width="2"></circle>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6l4 2"></path>
+                                </svg>
+                                <span class="tz-trigger-label" id="tz-trigger-label">
+                                    {{ if .Timezone }}{{ .Timezone }}{{ else }}Automatic (System: {{ appTimezoneName }}){{ end }}
+                                </span>
+                                <span class="tz-badge {{ if .Timezone }}badge-offset{{ else }}badge-auto{{ end }}" id="tz-trigger-badge">
+                                    {{ if .Timezone }}Custom{{ else }}Auto{{ end }}
+                                </span>
+                            </div>
+                            <svg class="tz-chevron" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        </button>
+
+                        <div class="tz-dropdown" id="tz-dropdown">
+                            <div class="tz-search-wrapper">
+                                <div class="tz-search-box">
+                                    <svg class="tz-search-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" width="16" height="16">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                                    </svg>
+                                    <input type="text" class="tz-search-input" id="tz-search-input" placeholder="Search among 420+ timezones (city, country, UTC offset)..." autocomplete="off" spellcheck="false">
+                                    <button type="button" class="tz-search-clear" id="tz-search-clear" title="Clear search" aria-label="Clear search">✕</button>
+                                </div>
+                            </div>
+
+                            <div class="tz-options-list" id="tz-options-list" role="listbox">
+                                <!-- Populated dynamically with full worldwide IANA timezones -->
+                            </div>
+                        </div>
+                    </div>
+                    <small class="text-secondary" style="display: block; margin-top: 0.5rem; font-size: 0.825rem;">
+                        System detected timezone: <strong>{{ appTimezoneName }}</strong>. Select <em>Automatic</em> to use the host system timezone, or choose from 420+ canonical IANA regions worldwide.
+                    </small>
+                </div>
+
+                <div class="form-actions">
+                    <button class="btn btn-primary" type="submit">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="16" height="16">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                        </svg>
+                        Save Timezone
+                    </button>
+                </div>
+            </form>
+        </div>
+    </section>
 </div>
 {{ end }}

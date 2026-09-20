@@ -570,12 +570,507 @@
             if (e.detail && e.detail.target && e.detail.target.closest && e.detail.target.closest('.main-content')) {
                 closeSidebar();
             }
+            initTimezoneSelect();
         });
+    }
+
+    function initTimezoneSelect() {
+        var wrapper = document.getElementById('tz-select-wrapper');
+        if (!wrapper || wrapper.dataset.initialized === 'true') {
+            return;
+        }
+        wrapper.dataset.initialized = 'true';
+
+        var hiddenInput = document.getElementById('timezone');
+        var trigger = document.getElementById('tz-select-trigger');
+        var triggerLabel = document.getElementById('tz-trigger-label');
+        var triggerBadge = document.getElementById('tz-trigger-badge');
+        var dropdown = document.getElementById('tz-dropdown');
+        var searchInput = document.getElementById('tz-search-input');
+        var searchClear = document.getElementById('tz-search-clear');
+        var optionsList = document.getElementById('tz-options-list');
+
+        if (!hiddenInput || !trigger || !dropdown || !searchInput || !optionsList) {
+            return;
+        }
+
+        var systemTz = wrapper.dataset.systemTz || 'Local';
+        var currentTz = hiddenInput.value || '';
+
+        function getTzOffset(tz) {
+            if (!tz) return '';
+            try {
+                var now = new Date();
+                var formatter = new Intl.DateTimeFormat('en-US', {
+                    timeZone: tz,
+                    timeZoneName: 'shortOffset'
+                });
+                var parts = formatter.formatToParts(now);
+                var p = parts.find(function (part) { return part.type === 'timeZoneName'; });
+                return p ? p.value.replace('GMT', 'UTC') : '';
+            } catch (e) {
+                return '';
+            }
+        }
+
+        function getTzCity(tz) {
+            if (!tz) return '';
+            var slashIdx = tz.lastIndexOf('/');
+            if (slashIdx !== -1) {
+                return tz.substring(slashIdx + 1).replace(/_/g, ' ');
+            }
+            return tz;
+        }
+
+        var comprehensiveTzs = [
+            // Americas
+            'America/Adak', 'America/Anchorage', 'America/Anguilla', 'America/Antigua', 'America/Araguaina',
+            'America/Argentina/Buenos_Aires', 'America/Argentina/Catamarca', 'America/Argentina/Cordoba', 'America/Argentina/Jujuy',
+            'America/Argentina/La_Rioja', 'America/Argentina/Mendoza', 'America/Argentina/Rio_Gallegos', 'America/Argentina/Salta',
+            'America/Argentina/San_Juan', 'America/Argentina/San_Luis', 'America/Argentina/Tucuman', 'America/Argentina/Ushuaia',
+            'America/Aruba', 'America/Asuncion', 'America/Atikokan', 'America/Bahia', 'America/Bahia_Banderas', 'America/Barbados',
+            'America/Belem', 'America/Belize', 'America/Blanc-Sablon', 'America/Boa_Vista', 'America/Bogota', 'America/Boise',
+            'America/Buenos_Aires', 'America/Cambridge_Bay', 'America/Campo_Grande', 'America/Cancun', 'America/Caracas',
+            'America/Cayenne', 'America/Cayman', 'America/Chicago', 'America/Chihuahua', 'America/Ciudad_Juarez', 'America/Costa_Rica',
+            'America/Creston', 'America/Cuiaba', 'America/Curacao', 'America/Danmarkshavn', 'America/Dawson', 'America/Dawson_Creek',
+            'America/Denver', 'America/Detroit', 'America/Dominica', 'America/Edmonton', 'America/Eirunepe', 'America/El_Salvador',
+            'America/Fort_Nelson', 'America/Fortaleza', 'America/Glace_Bay', 'America/Goose_Bay', 'America/Grand_Turk',
+            'America/Grenada', 'America/Guadeloupe', 'America/Guatemala', 'America/Guayaquil', 'America/Guyana', 'America/Halifax',
+            'America/Havana', 'America/Hermosillo', 'America/Indiana/Indianapolis', 'America/Indiana/Knox', 'America/Indiana/Marengo',
+            'America/Indiana/Petersburg', 'America/Indiana/Tell_City', 'America/Indiana/Vevay', 'America/Indiana/Vincennes', 'America/Indiana/Winamac',
+            'America/Inuvik', 'America/Iqaluit', 'America/Jamaica', 'America/Jujuy', 'America/Juneau', 'America/Kentucky/Louisville',
+            'America/Kentucky/Monticello', 'America/Kralendijk', 'America/La_Paz', 'America/Lima', 'America/Los_Angeles', 'America/Louisville',
+            'America/Lower_Princes', 'America/Maceio', 'America/Managua', 'America/Manaus', 'America/Marigot', 'America/Martinique',
+            'America/Matamoros', 'America/Mazatlan', 'America/Mendoza', 'America/Menominee', 'America/Merida', 'America/Metlakatla',
+            'America/Mexico_City', 'America/Miquelon', 'America/Moncton', 'America/Monterrey', 'America/Montevideo', 'America/Montserrat',
+            'America/Nassau', 'America/New_York', 'America/Nipigon', 'America/Nome', 'America/Noronha', 'America/North_Dakota/Beulah',
+            'America/North_Dakota/Center', 'America/North_Dakota/New_Salem', 'America/Ojinaga', 'America/Panama', 'America/Pangnirtung',
+            'America/Paramaribo', 'America/Phoenix', 'America/Port-au-Prince', 'America/Port_of_Spain', 'America/Porto_Velho',
+            'America/Puerto_Rico', 'America/Punta_Arenas', 'America/Rainy_River', 'America/Rankin_Inlet', 'America/Recife',
+            'America/Regina', 'America/Resolute', 'America/Rio_Branco', 'America/Santarem', 'America/Santiago', 'America/Santo_Domingo',
+            'America/Sao_Paulo', 'America/Scoresbysund', 'America/Sitka', 'America/St_Barthelemy', 'America/St_Johns', 'America/St_Kitts',
+            'America/St_Lucia', 'America/St_Thomas', 'America/St_Vincent', 'America/Swift_Current', 'America/Tegucigalpa', 'America/Thule',
+            'America/Thunder_Bay', 'America/Tijuana', 'America/Toronto', 'America/Tortola', 'America/Vancouver', 'America/Whitehorse',
+            'America/Winnipeg', 'America/Yakutat', 'America/Yellowknife',
+
+            // Europe
+            'Europe/Amsterdam', 'Europe/Andorra', 'Europe/Astrakhan', 'Europe/Athens', 'Europe/Belgrade', 'Europe/Berlin',
+            'Europe/Bratislava', 'Europe/Brussels', 'Europe/Bucharest', 'Europe/Budapest', 'Europe/Busingen', 'Europe/Chisinau',
+            'Europe/Copenhagen', 'Europe/Dublin', 'Europe/Gibraltar', 'Europe/Guernsey', 'Europe/Helsinki', 'Europe/Isle_of_Man',
+            'Europe/Istanbul', 'Europe/Jersey', 'Europe/Kaliningrad', 'Europe/Kyiv', 'Europe/Kirov', 'Europe/Lisbon',
+            'Europe/Ljubljana', 'Europe/London', 'Europe/Luxembourg', 'Europe/Madrid', 'Europe/Malta', 'Europe/Mariehamn',
+            'Europe/Minsk', 'Europe/Monaco', 'Europe/Moscow', 'Europe/Oslo', 'Europe/Paris', 'Europe/Podgorica', 'Europe/Prague',
+            'Europe/Riga', 'Europe/Rome', 'Europe/Samara', 'Europe/San_Marino', 'Europe/Sarajevo', 'Europe/Saratov', 'Europe/Simferopol',
+            'Europe/Skopje', 'Europe/Sofia', 'Europe/Stockholm', 'Europe/Tallinn', 'Europe/Tirane', 'Europe/Ulyanovsk', 'Europe/Uzhgorod',
+            'Europe/Vaduz', 'Europe/Vatican', 'Europe/Vienna', 'Europe/Vilnius', 'Europe/Volgograd', 'Europe/Warsaw', 'Europe/Zagreb',
+            'Europe/Zaporozhye', 'Europe/Zurich',
+
+            // Asia
+            'Asia/Almaty', 'Asia/Amman', 'Asia/Anadyr', 'Asia/Aqtau', 'Asia/Aqtobe', 'Asia/Ashgabat', 'Asia/Atyrau', 'Asia/Baghdad',
+            'Asia/Baku', 'Asia/Bangkok', 'Asia/Barnaul', 'Asia/Beirut', 'Asia/Bishkek', 'Asia/Brunei', 'Asia/Chita', 'Asia/Choibalsan',
+            'Asia/Colombo', 'Asia/Damascus', 'Asia/Dhaka', 'Asia/Dili', 'Asia/Dubai', 'Asia/Dushanbe', 'Asia/Famagusta', 'Asia/Gaza',
+            'Asia/Hebron', 'Asia/Ho_Chi_Minh', 'Asia/Hong_Kong', 'Asia/Hovd', 'Asia/Irkutsk', 'Asia/Jakarta', 'Asia/Jayapura',
+            'Asia/Jerusalem', 'Asia/Kabul', 'Asia/Kamchatka', 'Asia/Karachi', 'Asia/Kathmandu', 'Asia/Khandyga', 'Asia/Kolkata',
+            'Asia/Krasnoyarsk', 'Asia/Kuala_Lumpur', 'Asia/Kuching', 'Asia/Kuwait', 'Asia/Macau', 'Asia/Magadan', 'Asia/Makassar',
+            'Asia/Manila', 'Asia/Muscat', 'Asia/Nicosia', 'Asia/Novokuznetsk', 'Asia/Novosibirsk', 'Asia/Omsk', 'Asia/Oral',
+            'Asia/Phnom_Penh', 'Asia/Pontianak', 'Asia/Pyongyang', 'Asia/Qatar', 'Asia/Qostanay', 'Asia/Qyzylorda', 'Asia/Riyadh',
+            'Asia/Sakhalin', 'Asia/Samarkand', 'Asia/Seoul', 'Asia/Shanghai', 'Asia/Singapore', 'Asia/Srednekolymsk', 'Asia/Taipei',
+            'Asia/Tashkent', 'Asia/Tbilisi', 'Asia/Tehran', 'Asia/Thimphu', 'Asia/Tokyo', 'Asia/Tomsk', 'Asia/Ulaanbaatar',
+            'Asia/Urumqi', 'Asia/Ust-Nera', 'Asia/Vientiane', 'Asia/Vladivostok', 'Asia/Yakutsk', 'Asia/Yangon', 'Asia/Yekaterinburg',
+            'Asia/Yerevan',
+
+            // Africa
+            'Africa/Abidjan', 'Africa/Accra', 'Africa/Addis_Ababa', 'Africa/Algiers', 'Africa/Asmara', 'Africa/Bamako', 'Africa/Bangui',
+            'Africa/Banjul', 'Africa/Bissau', 'Africa/Blantyre', 'Africa/Brazzaville', 'Africa/Bujumbura', 'Africa/Cairo', 'Africa/Casablanca',
+            'Africa/Ceuta', 'Africa/Conakry', 'Africa/Dakar', 'Africa/Dar_es_Salaam', 'Africa/Djibouti', 'Africa/Douala', 'Africa/El_Aaiun',
+            'Africa/Freetown', 'Africa/Gaborone', 'Africa/Harare', 'Africa/Johannesburg', 'Africa/Juba', 'Africa/Kampala', 'Africa/Khartoum',
+            'Africa/Kigali', 'Africa/Kinshasa', 'Africa/Lagos', 'Africa/Libreville', 'Africa/Lome', 'Africa/Luanda', 'Africa/Lubumbashi',
+            'Africa/Lusaka', 'Africa/Malabo', 'Africa/Maputo', 'Africa/Maseru', 'Africa/Mbabane', 'Africa/Mogadishu', 'Africa/Monrovia',
+            'Africa/Nairobi', 'Africa/Ndjamena', 'Africa/Niamey', 'Africa/Nouakchott', 'Africa/Ouagadougou', 'Africa/Porto-Novo',
+            'Africa/Sao_Tome', 'Africa/Tripoli', 'Africa/Tunis', 'Africa/Windhoek',
+
+            // Pacific & Australia
+            'Australia/Adelaide', 'Australia/Brisbane', 'Australia/Broken_Hill', 'Australia/Darwin', 'Australia/Eucla', 'Australia/Hobart',
+            'Australia/Lindeman', 'Australia/Lord_Howe', 'Australia/Melbourne', 'Australia/Perth', 'Australia/Sydney',
+            'Pacific/Apia', 'Pacific/Auckland', 'Pacific/Bougainville', 'Pacific/Chatham', 'Pacific/Chuuk', 'Pacific/Easter',
+            'Pacific/Efate', 'Pacific/Fakaofo', 'Pacific/Fiji', 'Pacific/Funafuti', 'Pacific/Galapagos', 'Pacific/Gambier',
+            'Pacific/Guadalcanal', 'Pacific/Guam', 'Pacific/Honolulu', 'Pacific/Kanton', 'Pacific/Kiritimati', 'Pacific/Kosrae',
+            'Pacific/Kwajalein', 'Pacific/Majuro', 'Pacific/Marquesas', 'Pacific/Midway', 'Pacific/Nauru', 'Pacific/Niue',
+            'Pacific/Norfolk', 'Pacific/Noumea', 'Pacific/Pago_Pago', 'Pacific/Palau', 'Pacific/Pitcairn', 'Pacific/Pohnpei',
+            'Pacific/Port_Moresby', 'Pacific/Rarotonga', 'Pacific/Saipan', 'Pacific/Tahiti', 'Pacific/Tarawa', 'Pacific/Tongatapu',
+            'Pacific/Wake', 'Pacific/Wallis',
+
+            // Atlantic & Indian
+            'Atlantic/Azores', 'Atlantic/Bermuda', 'Atlantic/Canary', 'Atlantic/Cape_Verde', 'Atlantic/Faroe', 'Atlantic/Madeira',
+            'Atlantic/Reykjavik', 'Atlantic/South_Georgia', 'Atlantic/Stanley', 'Indian/Antananarivo', 'Indian/Chagos',
+            'Indian/Christmas', 'Indian/Cocos', 'Indian/Comoro', 'Indian/Kerguelen', 'Indian/Mahe', 'Indian/Maldives',
+            'Indian/Mauritius', 'Indian/Mayotte', 'Indian/Reunion',
+
+            // UTC
+            'UTC'
+        ];
+
+        var intlTzs = [];
+        if (typeof Intl !== 'undefined' && Intl.supportedValuesOf) {
+            try {
+                intlTzs = Intl.supportedValuesOf('timeZone');
+            } catch (e) {
+                intlTzs = [];
+            }
+        }
+
+        var allTzs = Array.from(new Set(comprehensiveTzs.concat(intlTzs))).sort();
+
+        var popularTzs = [
+            'America/Sao_Paulo', 'America/Fortaleza', 'America/Manaus',
+            'America/New_York', 'America/Chicago', 'America/Los_Angeles',
+            'UTC', 'Europe/London', 'Europe/Lisbon', 'Europe/Paris', 'Europe/Berlin',
+            'Asia/Tokyo', 'Asia/Shanghai', 'Australia/Sydney'
+        ];
+
+        var groups = {
+            'Popular': [],
+            'Americas': [],
+            'Europe': [],
+            'Asia': [],
+            'Pacific & Australia': [],
+            'Africa': [],
+            'Atlantic & Indian': [],
+            'UTC & Other': []
+        };
+
+        popularTzs.forEach(function (tz) {
+            if (allTzs.indexOf(tz) !== -1 || tz === 'UTC') {
+                groups['Popular'].push(tz);
+            }
+        });
+
+        allTzs.forEach(function (tz) {
+            if (tz.startsWith('America/')) {
+                groups['Americas'].push(tz);
+            } else if (tz.startsWith('Europe/')) {
+                groups['Europe'].push(tz);
+            } else if (tz.startsWith('Asia/')) {
+                groups['Asia'].push(tz);
+            } else if (tz.startsWith('Australia/') || tz.startsWith('Pacific/')) {
+                groups['Pacific & Australia'].push(tz);
+            } else if (tz.startsWith('Africa/')) {
+                groups['Africa'].push(tz);
+            } else if (tz.startsWith('Atlantic/') || tz.startsWith('Indian/')) {
+                groups['Atlantic & Indian'].push(tz);
+            } else {
+                groups['UTC & Other'].push(tz);
+            }
+        });
+
+        var html = '';
+
+        var isAutoSelected = !currentTz;
+        html += '<div class="tz-group" data-group="auto">';
+        html += '  <div class="tz-option' + (isAutoSelected ? ' selected' : '') + '" data-tz="" data-search="automatic system default auto ' + systemTz.toLowerCase() + '">';
+        html += '    <div class="tz-option-main">';
+        html += '      <span class="tz-option-name">Automatic (System Default)</span>';
+        html += '      <span class="tz-option-sub">Uses host OS timezone (' + systemTz + ')</span>';
+        html += '    </div>';
+        html += '    <div class="tz-option-meta">';
+        html += '      <span class="tz-badge badge-auto">Auto</span>';
+        html += '      <svg class="tz-check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path></svg>';
+        html += '    </div>';
+        html += '  </div>';
+        html += '</div>';
+
+        function buildSearchKeywords(tz, city, offset, groupName) {
+            var tokens = [
+                tz.toLowerCase(),
+                tz.replace(/_/g, ' ').toLowerCase(),
+                tz.replace(/\//g, ' ').toLowerCase(),
+                city.toLowerCase(),
+                groupName.toLowerCase()
+            ];
+
+            if (offset) {
+                var off = offset.toLowerCase();
+                tokens.push(off);
+                tokens.push(off.replace('utc', 'gmt'));
+                tokens.push(off.replace('utc', ''));
+                var numeric = off.replace('utc', '').replace(':00', '');
+                tokens.push(numeric);
+                if (numeric.startsWith('-0')) {
+                    tokens.push('-' + numeric.substring(2));
+                } else if (numeric.startsWith('+0')) {
+                    tokens.push('+' + numeric.substring(2));
+                }
+            }
+
+            // Country & regional aliases for quick search
+            if (/Sao_Paulo|Fortaleza|Manaus|Recife|Bahia|Belem|Cuiaba|Campo_Grande|Porto_Velho|Boa_Vista|Rio_Branco|Maceio|Santarem|Noronha|Araguaina/.test(tz)) {
+                tokens.push('brazil brasil brt');
+            } else if (/Buenos_Aires|Cordoba|Mendoza|Catamarca|Jujuy|Salta|San_Juan|Tucuman|Ushuaia/.test(tz)) {
+                tokens.push('argentina art');
+            } else if (/Santiago|Punta_Arenas/.test(tz)) {
+                tokens.push('chile clt');
+            } else if (/Bogota/.test(tz)) {
+                tokens.push('colombia');
+            } else if (/Lima/.test(tz)) {
+                tokens.push('peru');
+            } else if (/Montevideo/.test(tz)) {
+                tokens.push('uruguay');
+            } else if (/Mexico_City|Cancun|Monterrey|Tijuana|Ciudad_Juarez|Chihuahua|Hermosillo|Mazatlan/.test(tz)) {
+                tokens.push('mexico');
+            } else if (/New_York|Chicago|Los_Angeles|Denver|Phoenix|Detroit|Indianapolis|Anchorage|Honolulu|Boise/.test(tz)) {
+                tokens.push('usa united states america');
+            } else if (/Toronto|Vancouver|Montreal|Edmonton|Winnipeg|Halifax|St_Johns|Calgary/.test(tz)) {
+                tokens.push('canada');
+            } else if (/London/.test(tz)) {
+                tokens.push('uk united kingdom britain england gmt bst');
+            } else if (/Lisbon|Madeira|Azores/.test(tz)) {
+                tokens.push('portugal');
+            } else if (/Madrid|Ceuta|Canary/.test(tz)) {
+                tokens.push('spain espana');
+            } else if (/Paris/.test(tz)) {
+                tokens.push('france');
+            } else if (/Berlin|Busingen/.test(tz)) {
+                tokens.push('germany deutschland');
+            } else if (/Rome/.test(tz)) {
+                tokens.push('italy italia');
+            } else if (/Tokyo/.test(tz)) {
+                tokens.push('japan jst');
+            } else if (/Seoul/.test(tz)) {
+                tokens.push('korea');
+            } else if (/Shanghai|Beijing|Hong_Kong|Macau|Urumqi/.test(tz)) {
+                tokens.push('china');
+            } else if (/Sydney|Melbourne|Brisbane|Perth|Adelaide|Darwin|Hobart/.test(tz)) {
+                tokens.push('australia');
+            } else if (/Auckland|Chatham/.test(tz)) {
+                tokens.push('new zealand');
+            }
+
+            return tokens.join(' ');
+        }
+
+        Object.keys(groups).forEach(function (groupName) {
+            var list = groups[groupName];
+            if (!list || list.length === 0) return;
+
+            html += '<div class="tz-group" data-group="' + groupName.toLowerCase() + '">';
+            html += '  <div class="tz-group-title">' + groupName + ' (' + list.length + ')</div>';
+
+            list.forEach(function (tz) {
+                var offset = getTzOffset(tz);
+                var city = getTzCity(tz);
+                var isSelected = currentTz === tz;
+                var searchStr = buildSearchKeywords(tz, city, offset, groupName);
+
+                html += '  <div class="tz-option' + (isSelected ? ' selected' : '') + '" data-tz="' + tz + '" data-offset="' + offset + '" data-search="' + searchStr + '">';
+                html += '    <div class="tz-option-main">';
+                html += '      <span class="tz-option-name">' + tz + '</span>';
+                html += '      <span class="tz-option-sub">' + city + '</span>';
+                html += '    </div>';
+                html += '    <div class="tz-option-meta">';
+                if (offset) {
+                    html += '      <span class="tz-badge badge-offset">' + offset + '</span>';
+                }
+                html += '      <svg class="tz-check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path></svg>';
+                html += '    </div>';
+                html += '  </div>';
+            });
+
+            html += '</div>';
+        });
+
+        html += '<div class="tz-empty" id="tz-empty" style="display: none;">No timezones found matching your search.</div>';
+        optionsList.innerHTML = html;
+
+        function selectTimezone(tz, offset) {
+            hiddenInput.value = tz;
+            if (!tz) {
+                triggerLabel.textContent = 'Automatic (System: ' + systemTz + ')';
+                triggerBadge.textContent = 'Auto';
+                triggerBadge.className = 'tz-badge badge-auto';
+            } else {
+                var displayOffset = offset || getTzOffset(tz);
+                triggerLabel.textContent = tz + (displayOffset ? ' (' + displayOffset + ')' : '');
+                triggerBadge.textContent = displayOffset || 'Custom';
+                triggerBadge.className = 'tz-badge badge-offset';
+            }
+
+            optionsList.querySelectorAll('.tz-option').forEach(function (opt) {
+                opt.classList.toggle('selected', opt.dataset.tz === tz);
+                opt.classList.remove('highlighted');
+            });
+
+            closeDropdown();
+        }
+
+        function updatePlacement() {
+            var rect = wrapper.getBoundingClientRect();
+            var spaceBelow = window.innerHeight - rect.bottom;
+            var spaceAbove = rect.top;
+            var dropdownHeight = 390;
+
+            if (spaceBelow < dropdownHeight && spaceAbove > 260) {
+                wrapper.classList.add('dropup');
+            } else {
+                wrapper.classList.remove('dropup');
+            }
+        }
+
+        function openDropdown() {
+            wrapper.classList.add('open');
+            trigger.setAttribute('aria-expanded', 'true');
+            var section = wrapper.closest('.settings-section');
+            if (section) {
+                section.style.zIndex = '100';
+            }
+            updatePlacement();
+            searchInput.value = '';
+            searchClear.style.display = 'none';
+            filterOptions('');
+            setTimeout(function () {
+                searchInput.focus();
+                try {
+                    dropdown.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                } catch (e) {}
+            }, 60);
+        }
+
+        function closeDropdown() {
+            wrapper.classList.remove('open');
+            wrapper.classList.remove('dropup');
+            trigger.setAttribute('aria-expanded', 'false');
+            var section = wrapper.closest('.settings-section');
+            if (section) {
+                section.style.zIndex = '';
+            }
+        }
+
+        window.addEventListener('resize', function () {
+            if (wrapper.classList.contains('open')) {
+                updatePlacement();
+            }
+        });
+
+        trigger.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (wrapper.classList.contains('open')) {
+                closeDropdown();
+            } else {
+                openDropdown();
+            }
+        });
+
+        function getVisibleOptions() {
+            return Array.from(optionsList.querySelectorAll('.tz-option')).filter(function (opt) {
+                return opt.style.display !== 'none' && opt.closest('.tz-group').style.display !== 'none';
+            });
+        }
+
+        function filterOptions(query) {
+            var clean = (query || '').trim().toLowerCase();
+            var visibleCount = 0;
+            var groupsEl = optionsList.querySelectorAll('.tz-group');
+
+            groupsEl.forEach(function (groupEl) {
+                var options = groupEl.querySelectorAll('.tz-option');
+                var groupVisible = 0;
+
+                options.forEach(function (opt) {
+                    opt.classList.remove('highlighted');
+                    var searchData = opt.dataset.search || '';
+                    var matches = !clean || searchData.indexOf(clean) !== -1;
+                    opt.style.display = matches ? 'flex' : 'none';
+                    if (matches) {
+                        groupVisible++;
+                        visibleCount++;
+                    }
+                });
+
+                groupEl.style.display = groupVisible > 0 ? 'block' : 'none';
+            });
+
+            var emptyEl = document.getElementById('tz-empty');
+            if (emptyEl) {
+                emptyEl.style.display = visibleCount === 0 ? 'block' : 'none';
+            }
+        }
+
+        searchInput.addEventListener('input', function () {
+            var q = searchInput.value;
+            searchClear.style.display = q ? 'block' : 'none';
+            filterOptions(q);
+        });
+
+        searchClear.addEventListener('click', function (e) {
+            e.stopPropagation();
+            searchInput.value = '';
+            searchClear.style.display = 'none';
+            filterOptions('');
+            searchInput.focus();
+        });
+
+        optionsList.addEventListener('click', function (e) {
+            var opt = e.target.closest('.tz-option');
+            if (!opt) return;
+            var tz = opt.dataset.tz || '';
+            var offset = opt.dataset.offset || '';
+            selectTimezone(tz, offset);
+        });
+
+        searchInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') {
+                closeDropdown();
+                trigger.focus();
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                var visible = getVisibleOptions();
+                if (visible.length === 0) return;
+                var currentIdx = visible.findIndex(function (el) { return el.classList.contains('highlighted'); });
+                var nextIdx = currentIdx < visible.length - 1 ? currentIdx + 1 : 0;
+                visible.forEach(function (el) { el.classList.remove('highlighted'); });
+                visible[nextIdx].classList.add('highlighted');
+                visible[nextIdx].scrollIntoView({ block: 'nearest' });
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                var visible = getVisibleOptions();
+                if (visible.length === 0) return;
+                var currentIdx = visible.findIndex(function (el) { return el.classList.contains('highlighted'); });
+                var prevIdx = currentIdx > 0 ? currentIdx - 1 : visible.length - 1;
+                visible.forEach(function (el) { el.classList.remove('highlighted'); });
+                visible[prevIdx].classList.add('highlighted');
+                visible[prevIdx].scrollIntoView({ block: 'nearest' });
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                var highlighted = optionsList.querySelector('.tz-option.highlighted');
+                if (!highlighted) {
+                    var visible = getVisibleOptions();
+                    if (visible.length > 0) highlighted = visible[0];
+                }
+                if (highlighted) {
+                    selectTimezone(highlighted.dataset.tz || '', highlighted.dataset.offset || '');
+                }
+            }
+        });
+
+        document.addEventListener('click', function (e) {
+            if (!wrapper.contains(e.target)) {
+                closeDropdown();
+            }
+        });
+
+        if (currentTz) {
+            var curOffset = getTzOffset(currentTz);
+            if (curOffset) {
+                triggerLabel.textContent = currentTz + ' (' + curOffset + ')';
+                triggerBadge.textContent = curOffset;
+            }
+        }
     }
 
     function init() {
         connect();
         initSidebar();
+        initTimezoneSelect();
     }
 
     if (document.readyState === 'loading') {

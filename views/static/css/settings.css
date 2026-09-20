@@ -85,9 +85,14 @@
     border: 1px solid var(--border-color);
     border-radius: 12px;
     margin-bottom: 1.75rem;
-    overflow: hidden;
+    overflow: visible;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
     transition: border-color 0.2s ease;
+    position: relative;
+}
+
+.settings-section:has(.tz-select-wrapper.open) {
+    z-index: 100;
 }
 
 .settings-section:hover {
@@ -101,6 +106,8 @@
     gap: 1rem;
     align-items: center;
     background-color: rgba(255, 255, 255, 0.015);
+    border-top-left-radius: 11px;
+    border-top-right-radius: 11px;
 }
 
 .section-icon {
@@ -417,3 +424,345 @@
         grid-template-columns: 1fr 1fr;
     }
 }
+
+/* Timezone Custom Combobox */
+.tz-select-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+.tz-select-wrapper.open {
+    z-index: 1000;
+}
+
+.tz-select-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.7rem 0.95rem;
+    background-color: var(--tertiary-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.tz-select-trigger:hover {
+    border-color: var(--accent-purple-light);
+    background-color: rgba(45, 34, 65, 0.9);
+}
+
+.tz-select-trigger:focus,
+.tz-select-wrapper.open .tz-select-trigger {
+    border-color: var(--accent-purple);
+    background-color: rgba(37, 28, 53, 0.95);
+    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25);
+    outline: none;
+}
+
+.tz-trigger-content {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    flex: 1;
+    min-width: 0;
+}
+
+.tz-trigger-icon {
+    width: 18px;
+    height: 18px;
+    color: var(--accent-purple);
+    flex-shrink: 0;
+}
+
+.tz-trigger-label {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-weight: 500;
+}
+
+.tz-badge {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    flex-shrink: 0;
+}
+
+.tz-badge.badge-auto {
+    background-color: rgba(139, 92, 246, 0.2);
+    color: var(--accent-purple-light);
+    border: 1px solid rgba(139, 92, 246, 0.35);
+}
+
+.tz-badge.badge-offset {
+    background-color: rgba(255, 255, 255, 0.08);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+    font-family: monospace;
+}
+
+.tz-chevron {
+    width: 16px;
+    height: 16px;
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+    flex-shrink: 0;
+}
+
+.tz-select-wrapper.open .tz-chevron {
+    transform: rotate(180deg);
+    color: var(--accent-purple-light);
+}
+
+/* Timezone Dropdown */
+.tz-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    right: 0;
+    background-color: #171026;
+    border: 1px solid rgba(139, 92, 246, 0.35);
+    border-radius: 10px;
+    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.85), 0 4px 16px rgba(0, 0, 0, 0.6);
+    z-index: 1050;
+    overflow: hidden;
+    animation: tzFadeIn 0.15s ease-out;
+}
+
+@keyframes tzFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.tz-select-wrapper.open .tz-dropdown {
+    display: block;
+}
+
+/* Dropup variation (opens upwards when near page/screen bottom) */
+.tz-select-wrapper.dropup .tz-dropdown {
+    top: auto;
+    bottom: calc(100% + 8px);
+    box-shadow: 0 -20px 48px rgba(0, 0, 0, 0.85), 0 -4px 16px rgba(0, 0, 0, 0.6);
+    animation: tzFadeInUp 0.15s ease-out;
+}
+
+@keyframes tzFadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Dropdown Search Box */
+.tz-search-wrapper {
+    padding: 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+    background-color: rgba(14, 9, 22, 0.96);
+}
+
+.tz-search-box {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.55rem 0.85rem;
+    background-color: var(--tertiary-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    transition: all 0.2s ease;
+}
+
+.tz-search-box:focus-within {
+    border-color: var(--accent-purple);
+    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25);
+    background-color: rgba(37, 28, 53, 0.95);
+}
+
+.tz-search-icon {
+    width: 16px;
+    height: 16px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    transition: color 0.2s ease;
+}
+
+.tz-search-box:focus-within .tz-search-icon {
+    color: var(--accent-purple-light);
+}
+
+/* Force override of global .form-group input styles */
+.form-group .tz-search-box input.tz-search-input,
+.tz-search-box input.tz-search-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 100%;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    border: none !important;
+    border-radius: 0 !important;
+    color: var(--text-primary) !important;
+    font-size: 0.875rem !important;
+    line-height: 1.4 !important;
+    height: auto !important;
+    box-shadow: none !important;
+    outline: none !important;
+}
+
+.form-group .tz-search-box input.tz-search-input::placeholder,
+.tz-search-box input.tz-search-input::placeholder {
+    color: var(--text-muted);
+    opacity: 0.75;
+    font-size: 0.85rem;
+}
+
+.tz-search-clear {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    cursor: pointer;
+    padding: 0.15rem 0.35rem;
+    display: none;
+    border-radius: 4px;
+    line-height: 1;
+    flex-shrink: 0;
+    transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.tz-search-clear:hover {
+    color: var(--text-primary);
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Options List */
+.tz-options-list {
+    max-height: 320px;
+    overflow-y: auto;
+    padding: 0.4rem 0;
+}
+
+.tz-options-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.tz-options-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.tz-options-list::-webkit-scrollbar-thumb {
+    background-color: var(--border-color);
+    border-radius: 3px;
+}
+
+.tz-options-list::-webkit-scrollbar-thumb:hover {
+    background-color: var(--accent-purple);
+}
+
+.tz-group-title {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--accent-purple-light);
+    opacity: 0.85;
+    padding: 0.65rem 1rem 0.25rem;
+}
+
+.tz-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.55rem 1rem;
+    font-size: 0.875rem;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.tz-option:hover,
+.tz-option.highlighted {
+    background-color: rgba(139, 92, 246, 0.18);
+    color: #ffffff;
+}
+
+.tz-option.selected {
+    background-color: rgba(139, 92, 246, 0.28);
+    color: var(--accent-purple-light);
+    font-weight: 600;
+}
+
+.tz-option-main {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.tz-option-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tz-option-sub {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+.tz-option:hover .tz-option-sub,
+.tz-option.highlighted .tz-option-sub {
+    color: var(--text-secondary);
+}
+
+.tz-option.selected .tz-option-sub {
+    color: var(--accent-purple-light);
+    opacity: 0.8;
+}
+
+.tz-option-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+.tz-check-icon {
+    width: 14px;
+    height: 14px;
+    color: var(--accent-purple);
+    display: none;
+}
+
+.tz-option.selected .tz-check-icon {
+    display: block;
+}
+
+.tz-empty {
+    padding: 2rem 1rem;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
