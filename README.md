@@ -33,12 +33,13 @@ Built in **Go** with a **HTML + HTMX** frontend, Gorgon allows users to automati
 
 ## 📦 Stack
 
-- **Backend**: Go (REST API, modular architecture)
+- **Backend**: Go 1.26+ (single binary, no runtime dependencies)
 - **Frontend**: HTML + HTMX (server-rendered with progressive enhancement)
 - **Database**: SQLite (lightweight and embedded)
 - **Torrent Client**: [qBittorrent](https://www.qbittorrent.org/)
 - **Indexer Integration**: [Prowlarr](https://github.com/Prowlarr/Prowlarr)
 - **Scheduler/Jobs**: Custom cron-based workers
+- **Notifications**: Telegram Bot Api
 
 > ❗ Note: Gorgon does not provide or host any content. You must configure your own torrent client and indexer.
 
@@ -46,10 +47,10 @@ Built in **Go** with a **HTML + HTMX** frontend, Gorgon allows users to automati
 
 ## ⚙️ Requirements
 
-- [qBittorrent](https://www.qbittorrent.org/) with Web UI enabled
-- [Prowlarr](https://github.com/Prowlarr/Prowlarr) for torrent indexers
-- Go 1.25+
-- SQLite (default DB)
+- Go 1.26+ (to build from source)
+- [qBittorrent](https://www.qbittorrent.org/) (with Web UI enabled)
+- [Prowlarr](https://github.com/Prowlarr/Prowlarr) (torrent/usanet indexer aggregator)
+- ~50MB disk space (SQLite database + logs)
 
 ---
 
