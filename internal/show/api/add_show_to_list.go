@@ -7,12 +7,16 @@ import (
 	"github.com/jusoaresg/gorgon/external/tvmaze/service"
 	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
 	episodeRepository "github.com/jusoaresg/gorgon/internal/episode/repository"
+	filterSettingsModel "github.com/jusoaresg/gorgon/internal/filter_settings/model"
+	filterSettingsRepository "github.com/jusoaresg/gorgon/internal/filter_settings/repository"
 	seasonRepository "github.com/jusoaresg/gorgon/internal/season/repository"
 	"github.com/jusoaresg/gorgon/internal/show/model"
 	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
 	showSchema "github.com/jusoaresg/gorgon/internal/show/schema"
 	showManager "github.com/jusoaresg/gorgon/internal/show/service"
 	showAliasRepository "github.com/jusoaresg/gorgon/internal/show_aliases/repository"
+	showSettingsModel "github.com/jusoaresg/gorgon/internal/show_settings/model"
+	showSettingsRepository "github.com/jusoaresg/gorgon/internal/show_settings/repository"
 	"github.com/jusoaresg/gorgon/pkg/schemas"
 	"github.com/jusoaresg/gorgon/pkg/schemas/dtos"
 	"github.com/jusoaresg/gorgon/pkg/services"
@@ -101,12 +105,34 @@ func (h *Handler) addShowToListHandler(c echo.Context, request *showSchema.AddSh
 	if err != nil {
 		return nil, err
 	}
+	defer tx.Rollback()
 
 	showRepo := showRepository.NewShowRepository(h.DB)
 	showID, err := showRepo.CreateTx(tx, show)
 	if err != nil {
 		h.Logger.Error("Failed to add show to database", slog.String("error", err.Error()))
 		schemas.SendError(c, 500, "Failed to add show to database")
+		return nil, err
+	}
+	show.ID = showID
+
+	filterSettingsRepo := filterSettingsRepository.NewFilterSettingsRepository(h.DB)
+	globalSettings, err := filterSettingsRepo.Get()
+	if err != nil {
+		globalSettings = filterSettingsModel.DefaultFilterSettings()
+	}
+
+	showSettingsRepo := showSettingsRepository.NewShowSettingsRepository(h.DB)
+	showSettings := showSettingsModel.ShowSettings{
+		ShowID:          showID,
+		FilterProfileID: globalSettings.DefaultFilterProfileID,
+		ShowType:        showSettingsModel.DetectShowType(showDto.Genres, showDto.Type),
+		UseAliases:      globalSettings.UseAliases,
+		OnlyLatin:       globalSettings.OnlyLatin,
+	}
+	if err := showSettingsRepo.UpsertTx(tx, showSettings); err != nil {
+		h.Logger.Error("Failed to add show settings to database", slog.String("error", err.Error()))
+		schemas.SendError(c, 500, "Failed to add show settings to database")
 		return nil, err
 	}
 

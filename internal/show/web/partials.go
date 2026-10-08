@@ -15,6 +15,7 @@ import (
 	episodeRepository "github.com/jusoaresg/gorgon/internal/episode/repository"
 	filterProfileModel "github.com/jusoaresg/gorgon/internal/filter_profile/model"
 	filterProfileRepository "github.com/jusoaresg/gorgon/internal/filter_profile/repository"
+	filterSettingsModel "github.com/jusoaresg/gorgon/internal/filter_settings/model"
 	filterSettingsRepository "github.com/jusoaresg/gorgon/internal/filter_settings/repository"
 	seasonModel "github.com/jusoaresg/gorgon/internal/season/model"
 	seasonRepository "github.com/jusoaresg/gorgon/internal/season/repository"
@@ -115,11 +116,32 @@ func (h *Handler) AddShowHTMX(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	defer tx.Rollback()
 
 	showRepo := showRepository.NewShowRepository(h.DB)
 	showID, err := showRepo.CreateTx(tx, show)
 	if err != nil {
 		logger.Error("Failed to add show to database", slog.String("error", err.Error()))
+		return err
+	}
+	show.ID = showID
+
+	filterSettingsRepo := filterSettingsRepository.NewFilterSettingsRepository(h.DB)
+	globalSettings, err := filterSettingsRepo.Get()
+	if err != nil {
+		globalSettings = filterSettingsModel.DefaultFilterSettings()
+	}
+
+	showSettingsRepo := showSettingsRepository.NewShowSettingsRepository(h.DB)
+	showSettings := showSettingsModel.ShowSettings{
+		ShowID:          showID,
+		FilterProfileID: globalSettings.DefaultFilterProfileID,
+		ShowType:        showSettingsModel.DetectShowType(showDto.Genres, showDto.Type),
+		UseAliases:      globalSettings.UseAliases,
+		OnlyLatin:       globalSettings.OnlyLatin,
+	}
+	if err := showSettingsRepo.UpsertTx(tx, showSettings); err != nil {
+		logger.Error("Failed to add show settings to database", slog.String("error", err.Error()))
 		return err
 	}
 
