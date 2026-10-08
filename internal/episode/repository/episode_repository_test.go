@@ -132,3 +132,108 @@ func TestEpisodeRepository_Update_NotFound(t *testing.T) {
 	resultEpisode, err := episodeRepo.GetByID(episode.ID)
 	assert.NotEqualValues(t, episode, resultEpisode)
 }
+
+func TestEpisodeRepository_DeleteByID_Success(t *testing.T) {
+	episodeRepo, db := getEpRepo()
+
+	episode, _ := MakeEpisodeWithDeps(db)
+	id, err := episodeRepo.Create(episode)
+	assert.NoError(t, err)
+
+	err = episodeRepo.DeleteByID(id)
+	assert.NoError(t, err)
+
+	_, err = episodeRepo.GetByID(id)
+	assert.Error(t, err)
+}
+
+func TestEpisodeRepository_DeleteTx_Commit(t *testing.T) {
+	episodeRepo, db := getEpRepo()
+
+	episode, _ := MakeEpisodeWithDeps(db)
+	id, err := episodeRepo.Create(episode)
+	assert.NoError(t, err)
+
+	tx, err := db.Beginx()
+	assert.NoError(t, err)
+
+	err = episodeRepo.DeleteTx(tx, id)
+	assert.NoError(t, err)
+
+	err = tx.Commit()
+	assert.NoError(t, err)
+
+	_, err = episodeRepo.GetByID(id)
+	assert.Error(t, err)
+}
+
+func TestEpisodeRepository_DeleteTx_Rollback(t *testing.T) {
+	episodeRepo, db := getEpRepo()
+
+	episode, _ := MakeEpisodeWithDeps(db)
+	id, err := episodeRepo.Create(episode)
+	assert.NoError(t, err)
+
+	tx, err := db.Beginx()
+	assert.NoError(t, err)
+
+	err = episodeRepo.DeleteTx(tx, id)
+	assert.NoError(t, err)
+
+	err = tx.Rollback()
+	assert.NoError(t, err)
+
+	found, err := episodeRepo.GetByID(id)
+	assert.NoError(t, err)
+	assert.Equal(t, id, found.ID)
+}
+
+func TestEpisodeRepository_CreateTx_And_UpdateTx(t *testing.T) {
+	episodeRepo, db := getEpRepo()
+
+	episode, _ := MakeEpisodeWithDeps(db)
+
+	tx, err := db.Beginx()
+	assert.NoError(t, err)
+
+	id, err := episodeRepo.CreateTx(tx, episode)
+	assert.NoError(t, err)
+	assert.NotZero(t, id)
+
+	episode.ID = id
+	episode.Name = "Transaction Updated Name"
+	err = episodeRepo.UpdateTx(tx, episode)
+	assert.NoError(t, err)
+
+	err = tx.Commit()
+	assert.NoError(t, err)
+
+	found, err := episodeRepo.GetByID(id)
+	assert.NoError(t, err)
+	assert.Equal(t, "Transaction Updated Name", found.Name)
+}
+
+func TestEpisodeRepository_ListByFilters(t *testing.T) {
+	episodeRepo, db := getEpRepo()
+
+	episode, _ := MakeEpisodeWithDeps(db)
+	episode.Tracking = model.TrackingWanted
+	id, err := episodeRepo.Create(episode)
+	assert.NoError(t, err)
+
+	byShow, err := episodeRepo.ListByShowID(episode.ShowID)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, byShow)
+
+	bySeason, err := episodeRepo.ListBySeasonID(int(episode.SeasonID))
+	assert.NoError(t, err)
+	assert.NotEmpty(t, bySeason)
+
+	byTracking, err := episodeRepo.ListByTracking(model.TrackingWanted)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, byTracking)
+
+	allByID, err := episodeRepo.GetAllByID(id)
+	assert.NoError(t, err)
+	assert.Len(t, allByID, 1)
+}

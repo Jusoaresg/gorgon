@@ -207,3 +207,75 @@ func TestUpdateShowWithRelations_RollbackOnErrorKeepsDataIntact(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, count, "no new episode may survive a rolled back transaction")
 }
+
+func TestUpdateShowWithRelations_DeletedEpisode_RemovedWhenNotDownloadedOrSnatched(t *testing.T) {
+	trackings := []string{
+		episodeModel.TrackingWanted,
+		episodeModel.TrackingMissing,
+		episodeModel.TrackingSkipped,
+	}
+
+	for _, tracking := range trackings {
+		t.Run("deletes episode with tracking "+tracking, func(t *testing.T) {
+			fx := setupUpdateShowTest(t)
+
+			// Update the initial episode (S01E01) to the given tracking status
+			_, err := fx.db.Exec(`UPDATE episodes SET tracking = ? WHERE show_id = ? AND season = 1 AND number = 1`, tracking, fx.showID)
+			require.NoError(t, err)
+
+			showDTO := buildUpdateShowDTO(t, "Show With Episode Removed", `[]`)
+			seasonsDTO := []dtos.SeasonDto{{Number: 1}, {Number: 2}}
+			// TVmaze now only returns S02E01; S01E01 was removed from TVmaze!
+			episodesDTO := []dtos.EpisodeDto{
+				{Name: "Season 2 Episode 1", Season: 2, Number: 1, Type: "scripted", AirStamp: "2026-05-01T00:00:00Z"},
+			}
+
+			err = fx.svc.UpdateShowWithRelations(showDTO, seasonsDTO, episodesDTO)
+			require.NoError(t, err)
+
+			// S01E01 should have been deleted from the database
+			var count int
+			err = fx.db.Get(&count, `SELECT COUNT(*) FROM episodes WHERE show_id = ? AND season = 1 AND number = 1`, fx.showID)
+			require.NoError(t, err)
+			assert.Zero(t, count, "episode with tracking %s should be removed when absent from TVmaze", tracking)
+
+			// S02E01 should be present
+			err = fx.db.Get(&count, `SELECT COUNT(*) FROM episodes WHERE show_id = ? AND season = 2 AND number = 1`, fx.showID)
+			require.NoError(t, err)
+			assert.Equal(t, 1, count, "new TVmaze episode S02E01 must exist")
+		})
+	}
+}
+
+func TestUpdateShowWithRelations_DeletedEpisode_PreservedWhenSnatchedOrDownloaded(t *testing.T) {
+	trackings := []string{
+		episodeModel.TrackingSnatched,
+		episodeModel.TrackingDownloaded,
+	}
+
+	for _, tracking := range trackings {
+		t.Run("preserves episode with tracking "+tracking, func(t *testing.T) {
+			fx := setupUpdateShowTest(t)
+
+			// Update initial episode (S01E01) to snatched or downloaded
+			_, err := fx.db.Exec(`UPDATE episodes SET tracking = ? WHERE show_id = ? AND season = 1 AND number = 1`, tracking, fx.showID)
+			require.NoError(t, err)
+
+			showDTO := buildUpdateShowDTO(t, "Show With Episode Removed From TVmaze", `[]`)
+			seasonsDTO := []dtos.SeasonDto{{Number: 1}, {Number: 2}}
+			// TVmaze does not return S01E01
+			episodesDTO := []dtos.EpisodeDto{
+				{Name: "Season 2 Episode 1", Season: 2, Number: 1, Type: "scripted", AirStamp: "2026-05-01T00:00:00Z"},
+			}
+
+			err = fx.svc.UpdateShowWithRelations(showDTO, seasonsDTO, episodesDTO)
+			require.NoError(t, err)
+
+			// S01E01 must be PRESERVED
+			var count int
+			err = fx.db.Get(&count, `SELECT COUNT(*) FROM episodes WHERE show_id = ? AND season = 1 AND number = 1`, fx.showID)
+			require.NoError(t, err)
+			assert.Equal(t, 1, count, "episode with tracking %s must NOT be deleted even if removed from TVmaze", tracking)
+		})
+	}
+}

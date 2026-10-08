@@ -186,8 +186,10 @@ func (sm *ShowManagerService) UpdateShowWithRelations(
 		episodeMap[key] = e
 	}
 
+	tvmazeEpisodeKeys := make(map[string]bool, len(episodes))
 	for _, episode := range episodes {
 		key := fmt.Sprintf("%d:%d", episode.Season, episode.Number)
+		tvmazeEpisodeKeys[key] = true
 		if existing, ok := episodeMap[key]; ok {
 			sm.logger.Info("updating episode", slog.Int64("show_id", showModel.ID), slog.Int("season", episode.Season), slog.String("episode_name", episode.Name))
 			existing.Name = episode.Name
@@ -232,6 +234,36 @@ func (sm *ShowManagerService) UpdateShowWithRelations(
 			if err != nil {
 				//TODO: Error message
 				return err
+			}
+		}
+	}
+
+	for _, e := range episodesModel {
+		key := fmt.Sprintf("%d:%d", e.Season, e.Number)
+		if !tvmazeEpisodeKeys[key] {
+			if e.Tracking != episodeModel.TrackingSnatched && e.Tracking != episodeModel.TrackingDownloaded {
+				sm.logger.Info("deleting episode removed from TVmaze",
+					slog.Int64("episode_id", e.ID),
+					slog.Int64("show_id", showModel.ID),
+					slog.Int("season", e.Season),
+					slog.Int("number", e.Number),
+					slog.String("tracking", e.Tracking),
+				)
+				if err := sm.EpisodeRepo.DeleteTx(tx, e.ID); err != nil {
+					sm.logger.Error("failed to delete removed episode",
+						slog.Int64("episode_id", e.ID),
+						slog.String("error", err.Error()),
+					)
+					return err
+				}
+			} else {
+				sm.logger.Info("preserving episode removed from TVmaze because it is snatched or downloaded",
+					slog.Int64("episode_id", e.ID),
+					slog.Int64("show_id", showModel.ID),
+					slog.Int("season", e.Season),
+					slog.Int("number", e.Number),
+					slog.String("tracking", e.Tracking),
+				)
 			}
 		}
 	}

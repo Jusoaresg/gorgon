@@ -13,6 +13,7 @@ type EpisodeRepositoryInterface interface {
 	Create(episode model.Episode) (int64, error)
 	CreateTx(tx *sqlx.Tx, episode model.Episode) (int64, error)
 	DeleteByID(id int64) error
+	DeleteTx(tx *sqlx.Tx, id int64) error
 	GetByID(id int64) (model.Episode, error)
 	GetAllByID(ids ...int64) ([]model.Episode, error)
 	List() ([]model.Episode, error)
@@ -141,6 +142,13 @@ func (s *EpisodeRepository) GetAllByID(ids ...int64) ([]model.Episode, error) {
 
 func (s *EpisodeRepository) DeleteByID(id int64) error {
 	if _, err := s.db.Exec("DELETE FROM episodes WHERE id = ?", id); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *EpisodeRepository) DeleteTx(tx *sqlx.Tx, id int64) error {
+	if _, err := tx.Exec("DELETE FROM episodes WHERE id = ?", id); err != nil {
 		return err
 	}
 	return nil
