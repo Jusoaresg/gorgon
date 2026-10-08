@@ -42,12 +42,32 @@ type ShowsGridData struct {
 }
 
 func (h *Handler) ShowsRoute(c echo.Context) error {
-	search := c.QueryParam("search")
-	status := c.QueryParam("status")
-	sort := c.QueryParam("sort")
-	if sort == "" {
-		sort = "added"
+	savedSort, savedStatus := GetShowsPreferences(h.DB)
+
+	hasSortParam := c.QueryParams().Has("sort")
+	hasStatusParam := c.QueryParams().Has("status")
+
+	sort := savedSort
+	if hasSortParam {
+		paramSort := c.QueryParam("sort")
+		if isValidSort(paramSort) {
+			sort = paramSort
+		}
 	}
+
+	status := savedStatus
+	if hasStatusParam {
+		paramStatus := c.QueryParam("status")
+		if isValidStatus(paramStatus) {
+			status = normalizeStatus(paramStatus)
+		}
+	}
+
+	if (hasSortParam || hasStatusParam) && (sort != savedSort || status != savedStatus) {
+		_ = SaveShowsPreferences(h.DB, sort, status)
+	}
+
+	search := c.QueryParam("search")
 
 	shows, err := h.AggregatorService.ListFullShowsFiltered(search, status)
 	if err != nil {

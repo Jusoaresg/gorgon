@@ -41,9 +41,9 @@
                     hx-swap="outerHTML transition:true"
                     hx-include=".header-toolbar select, .header-toolbar input"
                 >
-                    <option value="" {{ if eq $filters.Status "" }}selected{{ end }}>Status: All</option>
-                    <option value="Running" {{ if eq $filters.Status "running" }}selected{{ end }}>Running</option>
-                    <option value="Ended" {{ if eq $filters.Status "ended" }}selected{{ end }}>Ended</option>
+                    <option value="" {{ if eq (toLower $filters.Status) "" }}selected{{ end }}>Status: All</option>
+                    <option value="Running" {{ if eq (toLower $filters.Status) "running" }}selected{{ end }}>Running</option>
+                    <option value="Ended" {{ if eq (toLower $filters.Status) "ended" }}selected{{ end }}>Ended</option>
                 </select>
                 
                 <select 
