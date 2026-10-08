@@ -1,6 +1,7 @@
 package workers
 
 import (
+	"context"
 	"log/slog"
 	"strings"
 	"sync"
@@ -19,7 +20,7 @@ type EpisodeJob struct {
 	Responses []schema.SearchResponse
 }
 
-func StartRssEpisodeFetcherWorker(workerCount int, prowlarrService *service.ProwlarrSearchService) {
+func StartRssEpisodeFetcherWorker(ctx context.Context, workerCount int, prowlarrService *service.ProwlarrSearchService) {
 	logger := config.GetLogger().WithGroup("worker").With("name", "StartRssFeedWorker")
 	rssProcessor := NewRssReleaseProcessor(config.GetSQLite())
 
@@ -34,54 +35,76 @@ func StartRssEpisodeFetcherWorker(workerCount int, prowlarrService *service.Prow
 
 	for i := range workerCount {
 		workerID := i
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
 			defer wg.Done()
 			logger.Info("Worker started", slog.Int("worker_id", workerID))
 
-			for job := range jobChan {
-				err := rssProcessor.RssProcessRelease(job.Episode, job.Responses)
-				if err != nil {
-					logger.Error(
-						"failed to process episode",
-						slog.String("error", err.Error()),
-						slog.Int64("show_id", job.Episode.ShowID),
-						slog.Int64("episode_id", job.Episode.ID),
-					)
-					continue
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case job, ok := <-jobChan:
+					if !ok {
+						return
+					}
+					err := rssProcessor.RssProcessRelease(job.Episode, job.Responses)
+					if err != nil {
+						logger.Error(
+							"failed to process episode",
+							slog.String("error", err.Error()),
+							slog.Int64("show_id", job.Episode.ShowID),
+							slog.Int64("episode_id", job.Episode.ID),
+						)
+						continue
+					}
 				}
 			}
-		})
+		}()
 	}
 
 	ticker := time.NewTicker(time.Minute * 1)
-	defer ticker.Stop()
+	defer func() {
+		ticker.Stop()
+		close(jobChan)
+		wg.Wait()
+		logger.Info("RSS feed worker stopped cleanly")
+	}()
 
 	for {
-		<-ticker.C
-		logger.Info("checking for wanted episodes")
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			logger.Info("checking for wanted episodes")
 
-		episodes := fetchRssFeedWantedEpisodes()
-		if len(episodes) == 0 {
-			logger.Info("no episodes found with status 'wanted' or 'missing'")
-			continue
-		}
+			episodes := fetchRssFeedWantedEpisodes()
+			if len(episodes) == 0 {
+				logger.Info("no episodes found with status 'wanted' or 'missing'")
+				continue
+			}
 
-		var currentResponses []schema.SearchResponse
+			var currentResponses []schema.SearchResponse
 
-		//TODO: Required words here
-		query := strings.Join([]string{"multi subs"}, " ")
-		prowlarrService.Search(&schema.SearchRequest{Query: query}, &currentResponses)
+			//TODO: Required words here
+			query := strings.Join([]string{"multi subs"}, " ")
+			prowlarrService.Search(&schema.SearchRequest{Query: query}, &currentResponses)
 
-		for _, ep := range episodes {
-			logger.Info(
-				"queuing episode for processing",
-				slog.Int64("episode_id", ep.ID),
-				slog.Int64("show_id", ep.ShowID),
-				slog.String("name", ep.Name),
-			)
-			jobChan <- EpisodeJob{
-				Episode:   ep,
-				Responses: currentResponses,
+			for _, ep := range episodes {
+				logger.Info(
+					"queuing episode for processing",
+					slog.Int64("episode_id", ep.ID),
+					slog.Int64("show_id", ep.ShowID),
+					slog.String("name", ep.Name),
+				)
+				select {
+				case <-ctx.Done():
+					return
+				case jobChan <- EpisodeJob{
+					Episode:   ep,
+					Responses: currentResponses,
+				}:
+				}
 			}
 		}
 	}

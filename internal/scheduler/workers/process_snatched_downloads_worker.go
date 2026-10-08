@@ -1,6 +1,7 @@
 package workers
 
 import (
+	"context"
 	"log/slog"
 	"time"
 
@@ -11,29 +12,43 @@ import (
 	"github.com/jusoaresg/gorgon/pkg/services"
 )
 
-func processSnatchedDownloadsWorker(episodesChan <-chan model.Episode, qbittorrentService *qbittorrent.QBittorrentService) {
+func processSnatchedDownloadsWorker(ctx context.Context, episodesChan <-chan model.Episode, qbittorrentService *qbittorrent.QBittorrentService) {
 	logger := config.GetLogger().WithGroup("worker").With("name", "processSnatchedDownloadsWorker")
 
-	for {
-		errs := services.CheckAllConnections(qbittorrentService)
-		if len(errs) > 0 {
-			logger.Error("Failed to connect to one or more services", slog.Any("errors", errs))
-			time.Sleep(30 * time.Second)
-			continue
+	if qbittorrentService != nil {
+		for {
+			errs := services.CheckAllConnections(qbittorrentService)
+			if len(errs) > 0 {
+				logger.Error("Failed to connect to one or more services", slog.Any("errors", errs))
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(30 * time.Second):
+					continue
+				}
+			}
+			break
 		}
-		break
 	}
 
 	episodeLogger := logger.WithGroup("episode").With("source", "snatched")
-	for episode := range episodesChan {
-		err := jobs.ProcessSingleSnatchedDownload(&episode, qbittorrentService)
-		if err != nil {
-			episodeLogger.Error(
-				"Error processing snatched episode downloaded",
-				slog.Int("episodeID", int(episode.ID)),
-				slog.Int64("showID", episode.ShowID),
-				slog.String("episodeName", episode.Name),
-				slog.String("error", err.Error()))
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case episode, ok := <-episodesChan:
+			if !ok {
+				return
+			}
+			err := jobs.ProcessSingleSnatchedDownload(&episode, qbittorrentService)
+			if err != nil {
+				episodeLogger.Error(
+					"Error processing snatched episode downloaded",
+					slog.Int("episodeID", int(episode.ID)),
+					slog.Int64("showID", episode.ShowID),
+					slog.String("episodeName", episode.Name),
+					slog.String("error", err.Error()))
+			}
 		}
 	}
 }

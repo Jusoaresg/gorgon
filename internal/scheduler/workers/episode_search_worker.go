@@ -1,6 +1,7 @@
 package workers
 
 import (
+	"context"
 	"log/slog"
 	"sync"
 	"time"
@@ -12,7 +13,7 @@ import (
 	"github.com/jusoaresg/gorgon/internal/episode/repository"
 )
 
-func StartEpisodeSearchWorker(workerCount int, prowlarrService *prowlarr.ProwlarrSearchService, qbittorrentService *qbittorrent.QBittorrentService) {
+func StartEpisodeSearchWorker(ctx context.Context, workerCount int, prowlarrService *prowlarr.ProwlarrSearchService, qbittorrentService *qbittorrent.QBittorrentService) {
 	logger := config.GetLogger().WithGroup("worker").With("name", "episodeSync")
 
 	episodeChan := make(chan model.Episode, 50)
@@ -22,33 +23,47 @@ func StartEpisodeSearchWorker(workerCount int, prowlarrService *prowlarr.Prowlar
 
 	for i := range workerCount {
 		workerID := i
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
 			defer wg.Done()
 			logger.Info("worker started", slog.Int("worker_id", workerID))
-			processEpisodesWorker(episodeChan, prowlarrService, qbittorrentService)
-		})
+			processEpisodesWorker(ctx, episodeChan, prowlarrService, qbittorrentService)
+		}()
 	}
 
 	ticker := time.NewTicker(time.Minute * 5)
-	defer ticker.Stop()
+	defer func() {
+		ticker.Stop()
+		close(episodeChan)
+		wg.Wait()
+		logger.Info("Episode sync workers stopped cleanly")
+	}()
 
 	for {
-		<-ticker.C
-		logger.Info("Checking for wanted episodes")
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			logger.Info("Checking for wanted episodes")
 
-		episodes := fetchEpisodeSearchWantedEpisodes()
-		if len(episodes) == 0 {
-			logger.Info("No episodes found with status 'wanted' or 'missing'")
-			continue
-		}
+			episodes := fetchEpisodeSearchWantedEpisodes()
+			if len(episodes) == 0 {
+				logger.Info("No episodes found with status 'wanted' or 'missing'")
+				continue
+			}
 
-		for _, ep := range episodes {
-			logger.Info("Queuing episode for processing",
-				slog.Int("episode_id", int(ep.ID)),
-				slog.Int64("show_id", ep.ShowID),
-				slog.String("name", ep.Name),
-			)
-			episodeChan <- ep
+			for _, ep := range episodes {
+				logger.Info("Queuing episode for processing",
+					slog.Int("episodeID", int(ep.ID)),
+					slog.Int64("showID", ep.ShowID),
+					slog.String("name", ep.Name),
+				)
+				select {
+				case <-ctx.Done():
+					return
+				case episodeChan <- ep:
+				}
+			}
 		}
 	}
 }
