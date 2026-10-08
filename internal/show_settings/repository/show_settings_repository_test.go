@@ -92,3 +92,26 @@ func TestShowSettingsRepository_ShowDeletionCascadesSettings(t *testing.T) {
 	_, err := repo.GetByShowID(showID)
 	assert.Error(t, err)
 }
+
+func TestShowSettingsRepository_UpsertTx(t *testing.T) {
+	repo := getShowSettingsRepo()
+	showID := createTestShow(t, repo)
+
+	tx, err := repo.db.Beginx()
+	assert.NoError(t, err)
+
+	err = repo.UpsertTx(tx, model.ShowSettings{
+		ShowID:     showID,
+		ShowType:   model.ShowTypeAnime,
+		UseAliases: true,
+		OnlyLatin:  false,
+	})
+	assert.NoError(t, err)
+	assert.NoError(t, tx.Commit())
+
+	got, err := repo.GetByShowID(showID)
+	assert.NoError(t, err)
+	assert.Equal(t, model.ShowTypeAnime, got.ShowType)
+	assert.True(t, got.UseAliases)
+	assert.False(t, got.OnlyLatin)
+}

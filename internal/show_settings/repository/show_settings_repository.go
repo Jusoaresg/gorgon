@@ -12,6 +12,7 @@ var ErrShowSettingsNotFound = errors.New("show settings not found")
 
 type ShowSettingsRepositoryInterface interface {
 	Upsert(settings model.ShowSettings) error
+	UpsertTx(tx *sqlx.Tx, settings model.ShowSettings) error
 	GetByShowID(showID int64) (model.ShowSettings, error)
 	DeleteByShowID(showID int64) error
 }
@@ -34,6 +35,34 @@ func (s *ShowSettingsRepository) Upsert(settings model.ShowSettings) error {
 	}
 
 	_, err := s.db.Exec(`
+		INSERT INTO show_settings (show_id, filter_profile_id, show_type, use_aliases, only_latin, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(show_id) DO UPDATE SET
+			filter_profile_id = excluded.filter_profile_id,
+			show_type = excluded.show_type,
+			use_aliases = excluded.use_aliases,
+			only_latin = excluded.only_latin,
+			updated_at = excluded.updated_at
+	`,
+		settings.ShowID,
+		settings.FilterProfileID,
+		showType,
+		settings.UseAliases,
+		settings.OnlyLatin,
+		now,
+		now,
+	)
+	return err
+}
+
+func (s *ShowSettingsRepository) UpsertTx(tx *sqlx.Tx, settings model.ShowSettings) error {
+	now := time.Now().Unix()
+	showType := settings.ShowType
+	if showType == "" {
+		showType = model.ShowTypeStandard
+	}
+
+	_, err := tx.Exec(`
 		INSERT INTO show_settings (show_id, filter_profile_id, show_type, use_aliases, only_latin, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(show_id) DO UPDATE SET
