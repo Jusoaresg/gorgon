@@ -15,7 +15,11 @@ func TestManager_LifecycleGracefulShutdown(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	mgr := NewManager(db, WithPollInterval(10*time.Millisecond))
+	mgr := NewManager(
+		db,
+		WithPollInterval(10*time.Millisecond),
+		WithUpdateAllShowsFunc(func() {}),
+	)
 	mgr.Start(ctx)
 
 	// Allow goroutines to spin up
@@ -35,7 +39,11 @@ func TestManager_Wait(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	mgr := NewManager(db, WithPollInterval(10*time.Millisecond))
+	mgr := NewManager(
+		db,
+		WithPollInterval(10*time.Millisecond),
+		WithUpdateAllShowsFunc(func() {}),
+	)
 	mgr.Start(ctx)
 
 	time.Sleep(30 * time.Millisecond)
