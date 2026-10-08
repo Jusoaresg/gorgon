@@ -16,7 +16,10 @@ type TvMazeSearchService struct {
 }
 
 func NewTvMazeSearchService(logger *slog.Logger) *TvMazeSearchService {
-	url := "http://api.tvmaze.com"
+	return NewTvMazeSearchServiceWithURL("https://api.tvmaze.com", logger)
+}
+
+func NewTvMazeSearchServiceWithURL(url string, logger *slog.Logger) *TvMazeSearchService {
 	return &TvMazeSearchService{
 		Logger:     logger,
 		Url:        url,
