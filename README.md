@@ -8,19 +8,21 @@ Built in **Go** with a **HTML + HTMX** frontend, Gorgon allows users to automati
 
 ## 🧠 Key Features
 
-- 📺 Track TV shows with metadata from TVMaze
-- 🔍 Search for episodes via Prowlarr indexers
-- 💾 Automate downloads with qBittorrent integration
+- 📺 Track TV shows with metadata from TVMaze (automatic background sync every 6h with smart cleanup)
+- 🌸 **Anime support & auto-detection**: Automatic anime classification from genres, dedicated anime search patterns, absolute episode numbering (`- 12`, `Ep 12`, `[12]`), and CRC32 hash stripping
+- 🔍 Search for episodes via Prowlarr indexers with standard and season-less release matching
+- 💾 Automate downloads with qBittorrent integration, including live speed monitoring and direct pause/resume torrent controls
 - ✈️ **Telegram notifications & bot**: Instant alerts for snatched and downloaded episodes, scheduled daily summaries, and interactive on-demand commands (`/summary`, `/ping`, `/start`)
 - 🧹 Organize downloads into structured folders with symlinks
 - 🎛️ Keyword-based **filter engine**: profiles with `required` / `rejected` / `preferred` (scored) patterns, per-show search patterns and global defaults
 - 🏷️ Custom aliases per show, searched alongside the canonical name
-- ⚡ Live UI updates via WebSocket (episode tracking buttons update in real time)
+- 🕒 **Timezone awareness**: Configurable application timezone with searchable selector; automatically localizes calendar, air times, and daily summaries
+- ⚡ Live UI updates via WebSocket and Idiomorph DOM morphing (episode tracking buttons update in real time with zero flicker)
 - 📅 Calendar page with upcoming episode releases
-- 📥 Downloads page to track actively downloading episodes
+- 📥 Downloads page with active progress, live transfer speeds, category filtering, and torrent state controls
 - 📝 File-based logging with a dedicated Logs page
-- 🧠 Background workers for syncing, cleanup, and update routines
-- 💻 Web UI built with HTML + HTMX for lightweight, dynamic interactions
+- 🧠 Background scheduler with graceful shutdown, periodic sync, cleanup, and update routines
+- 💻 Modern responsive Web UI built with HTML + HTMX (mobile navigation drawer, refined theme, glassmorphic toast notifications)
 - 📖 Open API docs served at `/api/v1/docs` (Swagger)
 
 ---
@@ -150,11 +152,15 @@ Multi-architecture images are provided for `linux/amd64` and `linux/arm64`. The 
     4.  Go to **Tools > Options > Web UI** and change the username and password.
     5.  In Gorgon's UI, go to the configurations page and enter your new credentials.
 
+-   **General & Timezone**:
+    1.  Go to **Settings > General**.
+    2.  Select your local timezone using the searchable combobox so calendar airings and Telegram daily summaries align with your local time.
+
 ---
 
 ## 🎛️ Filtering
 
-Gorgon filters search results and release candidates with **profiles** and **per-show search patterns**.
+Gorgon filters search results and release candidates with **profiles**, **per-show search patterns**, and **intelligent episode matching**.
 
 ### Filter Profiles
 
@@ -192,6 +198,17 @@ Patterns may use placeholders that are replaced with the show's data:
 | `{season:00}` | Season number zero-padded |
 | `{episode:00}` | Episode number zero-padded |
 
+### 🌸 Anime & Season-less Releases
+
+Gorgon automatically detects anime series when added (via TVMaze genre/type tags) and can be toggled manually per show (`standard` vs `anime`):
+
+- **Auto-Prepended Patterns**: For anime shows, Gorgon automatically prepends `{alias} - {episode:00}` and `{alias} S{season:00} - {episode:00}` before general queries.
+- **Flexible Token Matching**:
+  - Standard notations: `S01E02`, `1x02`, `S01.E02`, `S01E02-E04`, standalone `E02`, `Episode 02`, `Ep. 02`, `Part 02`.
+  - Anime notations: `Show - 12`, `Show - 05v2`, `Show Ep 12`, `Show [12]`.
+- **CRC32 Checksum Stripping**: Automatically removes bracketed 8-character release hashes (e.g. `[26EF07AE]`) so checksum digits do not trigger false episode matches.
+- **Smart Season-less Fallback**: Releases lacking an explicit season tag default strictly to **Season 1**. When searching for Season 2+, season-less releases are safely rejected to prevent cross-season false positives.
+
 ---
 
 ## 🤖 Telegram Bot & Notifications
@@ -226,7 +243,7 @@ The web UI consumes this same API, so every interaction in the interface maps to
 
 **v0.2** — under active development, but usable for personal setups.
 
-Current highlights: the filter engine (profiles, per-show patterns, scoring), custom aliases, live UI updates via WebSocket, full search → download → organize automation, and native Telegram bot integration.
+Current highlights: the filter engine (profiles, per-show patterns, scoring), anime auto-detection & absolute numbering, custom aliases, live UI updates via WebSocket, full search → download → organize automation, and native Telegram bot integration.
 
 ---
 
@@ -240,16 +257,22 @@ Here are the next steps planned for Gorgon, focusing on expanding features, impr
   - [X] Implement "Search All Missing" functionality on the show page.
   - [X] Implement the keyword-based scoring system for search results.
   - [X] Add filter profiles and per-show search patterns (combined and deduplicated).
+  - [X] Support anime auto-detection, absolute numbering, and CRC checksum stripping.
+  - [X] Support standalone episode matching with safe Season 1 fallback.
 - **Organization & Tracking:**
-  - [X] Add a "Downloads" page to display the status of episodes being actively downloaded.
+  - [X] Add a "Downloads" page with live speed metrics, category filters, and pause/resume torrent controls.
   - [X] Add per-show custom aliases.
   - [ ] Add a "Bulk Edit" feature for managing multiple shows at once.
 - **User Interface:**
   - [X] Create a "Calendar" page to display upcoming episode releases for tracked shows.
   - [X] Persist the user's choice of Grid or List view on the shows page.
   - [X] Update episode buttons in real time via WebSocket.
+  - [X] Configurable application timezone with localized calendar and release dates.
+  - [X] Responsive mobile UI with drawer navigation and glassmorphic toast notifications.
 - **System & Management:**
   - [X] Implement file-based logging with a dedicated page in the UI for viewing logs.
+  - [X] Periodic TVMaze sync every 6 hours with cleanup of unsnatched removed episodes.
+  - [X] Centralized scheduler manager with graceful shutdown and context cancellation.
 
 ### 🔌 Integrations
 - **Notifications & Bots:**
@@ -265,7 +288,7 @@ Here are the next steps planned for Gorgon, focusing on expanding features, impr
 
 ### 🧪 Development & DevOps
 - **Testing:**
-  - [ ] Increase unit test coverage across the backend.
+  - [X] Comprehensive unit test coverage across the backend (services, repositories, filter engine, and race-tested scheduler).
 - **Deployment:**
   - [X] Create a `Dockerfile` for the Gorgon application.
   - [x] Set up a `docker-compose.yml` file for a complete, one-command deployment with Prowlarr and a torrent client.
