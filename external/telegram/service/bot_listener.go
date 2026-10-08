@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -12,7 +13,7 @@ import (
 	"github.com/jusoaresg/gorgon/external/telegram/schema"
 )
 
-func StartTelegramBotListener(db *sqlx.DB) {
+func StartTelegramBotListener(ctx context.Context, db *sqlx.DB) {
 	logger := config.GetLogger().WithGroup("telegramBot").With("name", "BotListener")
 
 	go func() {
@@ -22,10 +23,22 @@ func StartTelegramBotListener(db *sqlx.DB) {
 		client := NewTelegramClient(logger)
 
 		for {
+			select {
+			case <-ctx.Done():
+				logger.Info("Telegram bot listener stopped")
+				return
+			default:
+			}
+
 			cfg, err := config.LoadConfig()
 			if err != nil || cfg.TelegramBotApiKey == "" {
-				time.Sleep(10 * time.Second)
-				continue
+				select {
+				case <-ctx.Done():
+					logger.Info("Telegram bot listener stopped")
+					return
+				case <-time.After(10 * time.Second):
+					continue
+				}
 			}
 
 			token := cfg.TelegramBotApiKey
@@ -34,14 +47,24 @@ func StartTelegramBotListener(db *sqlx.DB) {
 			var resp schema.GetUpdatesResponse
 			if err := client.ApiService.Get(endpoint, &resp); err != nil {
 				logger.Debug("getUpdates poll cycle completed or timed out", slog.String("error", err.Error()))
-				time.Sleep(3 * time.Second)
-				continue
+				select {
+				case <-ctx.Done():
+					logger.Info("Telegram bot listener stopped")
+					return
+				case <-time.After(3 * time.Second):
+					continue
+				}
 			}
 
 			if !resp.Ok {
 				logger.Debug("getUpdates returned not ok", slog.String("description", resp.Description))
-				time.Sleep(5 * time.Second)
-				continue
+				select {
+				case <-ctx.Done():
+					logger.Info("Telegram bot listener stopped")
+					return
+				case <-time.After(5 * time.Second):
+					continue
+				}
 			}
 
 			for _, u := range resp.Result {

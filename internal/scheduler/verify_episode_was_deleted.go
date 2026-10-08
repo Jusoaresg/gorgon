@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/jusoaresg/gorgon/config"
 	"github.com/jusoaresg/gorgon/internal/episode/model"
 	episodeRepositoy "github.com/jusoaresg/gorgon/internal/episode/repository"
@@ -16,8 +17,14 @@ import (
 )
 
 func VerifyEpisodeWasDeleted() {
+	VerifyEpisodeWasDeletedWithDB(config.GetSQLite())
+}
+
+func VerifyEpisodeWasDeletedWithDB(db *sqlx.DB) {
+	if db == nil {
+		return
+	}
 	logger := config.GetLogger().WithGroup("scheduler").With("name", "VerifyEpisodeWasDeleted")
-	db := config.GetSQLite()
 
 	configFile, err := config.LoadConfig()
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/jusoaresg/gorgon/config"
 	"github.com/jusoaresg/gorgon/external/tvmaze/service"
 	showHandler "github.com/jusoaresg/gorgon/internal/show/api"
@@ -14,8 +15,14 @@ import (
 )
 
 func UpdateAllShows() {
+	UpdateAllShowsWithDB(config.GetSQLite())
+}
+
+func UpdateAllShowsWithDB(db *sqlx.DB) {
+	if db == nil {
+		return
+	}
 	logger := config.GetLogger().WithGroup("scheduler").With("name", "UpdateAllShows")
-	db := config.GetSQLite()
 
 	showRepo := showRepository.NewShowRepository(db)
 	shows, err := showRepo.List()

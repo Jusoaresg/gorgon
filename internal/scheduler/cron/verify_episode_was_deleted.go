@@ -1,18 +1,26 @@
 package cron
 
 import (
-	"github.com/jusoaresg/gorgon/config"
+	"context"
 	"time"
+
+	"github.com/jusoaresg/gorgon/config"
 )
 
-func StartVerifyEpisodeWasDeleted(callback func()) {
+func StartVerifyEpisodeWasDeleted(ctx context.Context, callback func()) {
 	logger := config.GetLogger().WithGroup("cron").With("name", "StartVerifyEpisodeWasDeleted")
-	go func() {
-		for {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Info("verification of deleted episodes stopped")
+			return
+		case <-ticker.C:
 			logger.Info("Starting to verifying if any episode has been deleted")
 			callback()
 			logger.Info("Verification of deleted episodes completed")
-			time.Sleep(5 * time.Minute)
 		}
-	}()
+	}
 }

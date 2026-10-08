@@ -1,6 +1,7 @@
 package cron
 
 import (
+	"context"
 	"log/slog"
 	"time"
 
@@ -9,13 +10,19 @@ import (
 	"github.com/jusoaresg/gorgon/internal/scheduler/jobs"
 )
 
-func StartDailySummaryCron(db *sqlx.DB) {
+func StartDailySummaryCron(ctx context.Context, db *sqlx.DB) {
 	logger := config.GetLogger().WithGroup("cron").With("name", "DailySummaryCron")
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
 
-	go func() {
-		var lastSentDate string
+	var lastSentDate string
 
-		for {
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Info("daily summary cron stopped")
+			return
+		case <-ticker.C:
 			now := time.Now().In(config.GetAppLocation())
 			currentDate := now.Format("2006-01-02")
 			currentTime := now.Format("15:04")
@@ -36,8 +43,6 @@ func StartDailySummaryCron(db *sqlx.DB) {
 					}
 				}
 			}
-
-			time.Sleep(30 * time.Second)
 		}
-	}()
+	}
 }

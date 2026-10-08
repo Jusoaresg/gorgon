@@ -1,18 +1,30 @@
 package cron
 
 import (
-	"github.com/jusoaresg/gorgon/config"
+	"context"
 	"time"
+
+	"github.com/jusoaresg/gorgon/config"
 )
 
-func StartDailyUpdate(callback func()) {
+func StartDailyUpdate(ctx context.Context, callback func()) {
 	logger := config.GetLogger().WithGroup("scheduler").With("name", "StartDailyUpdate")
-	go func() {
-		for {
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	logger.Info("starting to updating shows")
+	callback()
+	logger.Info("shows update completed")
+
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Info("daily update stopped")
+			return
+		case <-ticker.C:
 			logger.Info("starting to updating shows")
 			callback()
 			logger.Info("shows update completed")
-			time.Sleep(24 * time.Hour)
 		}
-	}()
+	}
 }
