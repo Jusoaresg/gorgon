@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -105,6 +106,9 @@ func (p *ProwlarrSearchService) unlock() {
 }
 
 func (p *ProwlarrSearchService) CheckConnection() error {
+	if p == nil {
+		return errors.New("prowlarr service not configured")
+	}
 	var resp struct {
 		Status string `json:"status"`
 	}

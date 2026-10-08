@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -230,6 +231,9 @@ func responseBodySnippet(resp *http.Response) string {
 }
 
 func (q *QBittorrentService) CheckConnection() error {
+	if q == nil || q.APIService == nil {
+		return errors.New("qbittorrent service not configured")
+	}
 	resp, err := q.doAuthenticatedRequest(func() (*http.Response, error) {
 		headers := map[string]string{
 			"Cookie":  q.cookieHeader(),
