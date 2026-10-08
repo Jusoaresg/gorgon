@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"log/slog"
 	"strconv"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/jusoaresg/gorgon/config"
 	"github.com/jusoaresg/gorgon/external/tvmaze/service"
+	"github.com/jusoaresg/gorgon/internal/scheduler/cron"
 	showHandler "github.com/jusoaresg/gorgon/internal/show/api"
 	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
 	showManager "github.com/jusoaresg/gorgon/internal/show/service"
@@ -19,8 +21,15 @@ func UpdateAllShows() {
 }
 
 func UpdateAllShowsWithDB(db *sqlx.DB) {
+	UpdateAllShowsWithContext(context.Background(), db)
+}
+
+func UpdateAllShowsWithContext(ctx context.Context, db *sqlx.DB) {
 	if db == nil {
 		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	logger := config.GetLogger().WithGroup("scheduler").With("name", "UpdateAllShows")
 
@@ -33,25 +42,32 @@ func UpdateAllShowsWithDB(db *sqlx.DB) {
 
 	tvMazeService := service.NewTvMazeSearchService(logger)
 	showManagerService := showManager.NewShowManagerService(logger, db)
-	apiService := services.NewAPIService("http://api.tvmaze.com", logger)
+	apiService := services.NewAPIService("https://api.tvmaze.com", logger)
 
 	var updates map[string]int64
 
 	url := "/updates/shows?since=week"
-	if err := apiService.Get(url, &updates); err != nil {
+	if err := apiService.GetContext(ctx, url, &updates); err != nil {
 		logger.Error("failed to get updated shows from tvmaze", slog.String("error", err.Error()))
 		return
 	}
 
 	updatedCount := 0
 	for _, showOld := range shows {
-		updatedAt, ok := updates[strconv.FormatInt(showOld.TvMazeID, 10)]
-		if !ok {
-			continue
+		if ctx.Err() != nil {
+			logger.Info("show updates stopped due to context cancellation")
+			return
 		}
 
-		if int64(showOld.Updated) < updatedAt {
+		updatedAt, ok := updates[strconv.FormatInt(showOld.TvMazeID, 10)]
+		shouldUpdate := false
+		if ok && int64(showOld.Updated) < updatedAt {
+			shouldUpdate = true
+		} else if showOld.Updated == 0 {
+			shouldUpdate = true
+		}
 
+		if shouldUpdate {
 			logger.Info(
 				"updating show",
 				slog.Int64("show_id", showOld.ID),
@@ -71,9 +87,16 @@ func UpdateAllShowsWithDB(db *sqlx.DB) {
 			}
 
 			updatedCount++
-			time.Sleep(15 * time.Second)
+
+			select {
+			case <-ctx.Done():
+				logger.Info("show updates stopped due to context cancellation")
+				return
+			case <-time.After(1 * time.Second):
+			}
 		}
 	}
 
 	logger.Info("finished updating shows", slog.Int("total_updated", updatedCount))
+	_ = cron.SetLastShowsUpdateTime(db, time.Now())
 }

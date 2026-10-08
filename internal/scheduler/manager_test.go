@@ -63,3 +63,15 @@ func TestManager_Wait(t *testing.T) {
 		t.Fatal("mgr.Wait() did not unblock within timeout after cancellation")
 	}
 }
+
+func TestManager_WithShowsUpdateInterval(t *testing.T) {
+	db := testutils.GetTestDB()
+	defer db.Close()
+
+	mgr := NewManager(
+		db,
+		WithShowsUpdateInterval(12*time.Hour),
+	)
+
+	assert.Equal(t, 12*time.Hour, mgr.showsUpdateInterval)
+}

@@ -36,22 +36,29 @@ func WithVerifyDeletedFunc(fn func()) ManagerOption {
 	}
 }
 
+func WithShowsUpdateInterval(d time.Duration) ManagerOption {
+	return func(m *Manager) {
+		m.showsUpdateInterval = d
+	}
+}
+
 type Manager struct {
-	logger           *slog.Logger
-	db               *sqlx.DB
-	wg               sync.WaitGroup
-	pollInterval     time.Duration
-	updateAllShowsFn func()
-	verifyDeletedFn  func()
+	logger              *slog.Logger
+	db                  *sqlx.DB
+	wg                  sync.WaitGroup
+	pollInterval        time.Duration
+	showsUpdateInterval time.Duration
+	updateAllShowsFn    func()
+	verifyDeletedFn     func()
 }
 
 func NewManager(db *sqlx.DB, opts ...ManagerOption) *Manager {
 	m := &Manager{
-		logger:           config.GetLogger().WithGroup("scheduler").With("name", "Manager"),
-		db:               db,
-		pollInterval:     30 * time.Second,
-		updateAllShowsFn: func() { UpdateAllShowsWithDB(db) },
-		verifyDeletedFn:  func() { VerifyEpisodeWasDeletedWithDB(db) },
+		logger:              config.GetLogger().WithGroup("scheduler").With("name", "Manager"),
+		db:                  db,
+		pollInterval:        30 * time.Second,
+		showsUpdateInterval: 6 * time.Hour,
+		verifyDeletedFn:     func() { VerifyEpisodeWasDeletedWithDB(db) },
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -74,7 +81,11 @@ func (m *Manager) Start(ctx context.Context) {
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
-		cron.StartDailyUpdate(ctx, m.updateAllShowsFn)
+		updateFn := m.updateAllShowsFn
+		if updateFn == nil {
+			updateFn = func() { UpdateAllShowsWithContext(ctx, m.db) }
+		}
+		cron.StartShowsUpdate(ctx, m.db, m.showsUpdateInterval, updateFn)
 	}()
 
 	m.wg.Add(1)
