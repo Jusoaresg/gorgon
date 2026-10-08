@@ -1,6 +1,7 @@
 package testutils
 
 import (
+	"github.com/jusoaresg/gorgon/config"
 	"github.com/jusoaresg/gorgon/migrations"
 
 	"github.com/jmoiron/sqlx"
@@ -23,5 +24,6 @@ func GetTestDB() *sqlx.DB {
 		panic(err)
 	}
 
+	config.SetSQLite(db)
 	return db
 }

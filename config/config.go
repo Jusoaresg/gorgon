@@ -121,6 +121,13 @@ func GetSQLite() *sqlx.DB {
 	return safeDB.Db
 }
 
+func SetSQLite(db *sqlx.DB) {
+	safeDB = SafeDB{
+		Db:    db,
+		Write: &sync.Mutex{},
+	}
+}
+
 func GetSafeDB() *SafeDB {
 	if safeDB.Db == nil {
 		panic("database is not initialized")

@@ -15,7 +15,6 @@ import (
 	"github.com/jusoaresg/gorgon/internal/app"
 	"github.com/jusoaresg/gorgon/internal/routes"
 	"github.com/jusoaresg/gorgon/internal/scheduler"
-	"github.com/jusoaresg/gorgon/internal/scheduler/cron"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -51,13 +50,17 @@ func main() {
 	dependencies := app.NewDependencies()
 
 	routes.InitializeRoutes(e, dependencies)
-	cron.StartDailyUpdate(scheduler.UpdateAllShows)
 
-	// Initialize Crons, Schedulers and Listeners
-	scheduler.Start()
-	cron.StartVerifyEpisodeWasDeleted(scheduler.VerifyEpisodeWasDeleted)
-	cron.StartDailySummaryCron(dependencies.DB)
-	telegramService.StartTelegramBotListener(dependencies.DB)
+	// Root context for background processes and workers
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Initialize and start unified scheduler manager
+	schedManager := scheduler.NewManager(dependencies.DB)
+	schedManager.Start(ctx)
+
+	// Start Telegram bot listener with context
+	telegramService.StartTelegramBotListener(ctx, dependencies.DB)
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
@@ -72,13 +75,20 @@ func main() {
 	sig := <-sigs
 	log.Printf("signal received: %s, shutting down gorgon", sig)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	// Step 1: Gracefully stop Echo server (stop accepting new requests)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
 
-	if err := e.Shutdown(ctx); err != nil {
+	if err := e.Shutdown(shutdownCtx); err != nil {
 		log.Printf("error shutting down Echo server: %v", err)
 	}
 
+	// Step 2: Signal background workers to stop and wait for them to finish
+	log.Println("waiting for background workers to finish in-flight jobs...")
+	cancel()
+	schedManager.StopWithTimeout(10 * time.Second)
+
+	// Step 3: Cleanly close database connection
 	if err := dependencies.DB.Close(); err != nil {
 		log.Printf("error closing database: %v", err)
 	} else {
