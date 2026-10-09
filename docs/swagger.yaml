@@ -219,7 +219,7 @@ info:
     name: Apache 2.0
     url: http://www.apache.org/licenses/LICENSE-2.0.html
   title: Gongon
-  version: "0.1"
+  version: "0.3"
 paths:
   /app/config:
     get:

@@ -241,7 +241,7 @@ The web UI consumes this same API, so every interaction in the interface maps to
 
 ## 🚧 Status
 
-**v0.2** — under active development, but usable for personal setups.
+**v0.3** — under active development, but usable for personal setups.
 
 Current highlights: the filter engine (profiles, per-show patterns, scoring), anime auto-detection & absolute numbering, custom aliases, live UI updates via WebSocket, full search → download → organize automation, and native Telegram bot integration.
 
