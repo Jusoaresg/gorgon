@@ -14,6 +14,10 @@ func validateSaveProfileRequest(request schema.SaveFilterProfileRequest) error {
 		return errors.New("name is required")
 	}
 
+	if request.UpgradeUntilScore < 0 {
+		return errors.New("upgrade_until_score cannot be negative")
+	}
+
 	for i, pattern := range request.Patterns {
 		if strings.TrimSpace(pattern.Pattern) == "" {
 			return fmt.Errorf("pattern %d: pattern is required", i)

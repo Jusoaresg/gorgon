@@ -39,8 +39,8 @@ func (s *FilterProfileRepository) Create(profile model.FilterProfile, patterns [
 	profile.UpdatedAt = now
 
 	result, err := tx.NamedExec(`
-		INSERT INTO filter_profiles (name, created_at, updated_at)
-		VALUES (:name, :created_at, :updated_at)
+		INSERT INTO filter_profiles (name, upgrade_until_score, created_at, updated_at)
+		VALUES (:name, :upgrade_until_score, :created_at, :updated_at)
 	`, profile)
 	if err != nil {
 		tx.Rollback()
@@ -75,7 +75,7 @@ func (s *FilterProfileRepository) Update(profile model.FilterProfile, patterns [
 
 	result, err := tx.NamedExec(`
 		UPDATE filter_profiles
-		SET name = :name, updated_at = :updated_at
+		SET name = :name, upgrade_until_score = :upgrade_until_score, updated_at = :updated_at
 		WHERE id = :id
 	`, profile)
 	if err != nil {

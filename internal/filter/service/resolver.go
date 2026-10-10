@@ -86,6 +86,7 @@ func ResolveProfile(db *sqlx.DB, settings EffectiveSettings) (*filter.Profile, e
 		base := ToProfile(profileModel, patterns)
 		profile.ID = base.ID
 		profile.Name = base.Name
+		profile.UpgradeUntilScore = base.UpgradeUntilScore
 		profile.Search = base.Search
 		profile.Required = base.Required
 		profile.Rejected = base.Rejected
@@ -106,8 +107,9 @@ func ResolveProfile(db *sqlx.DB, settings EffectiveSettings) (*filter.Profile, e
 
 func ToProfile(p filterProfileModel.FilterProfile, patterns []filterProfileModel.FilterPattern) *filter.Profile {
 	profile := &filter.Profile{
-		ID:   p.ID,
-		Name: p.Name,
+		ID:                p.ID,
+		Name:              p.Name,
+		UpgradeUntilScore: p.UpgradeUntilScore,
 	}
 
 	for _, pattern := range patterns {

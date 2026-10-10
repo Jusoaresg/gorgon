@@ -11,19 +11,22 @@ type FilterPatternDto struct {
 }
 
 type SaveFilterProfileRequest struct {
-	Name     string             `json:"name"`
-	Patterns []FilterPatternDto `json:"patterns"`
+	Name              string             `json:"name"`
+	UpgradeUntilScore int                `json:"upgrade_until_score"`
+	Patterns          []FilterPatternDto `json:"patterns"`
 }
 
 type FilterProfileDto struct {
-	ID       int64              `json:"id"`
-	Name     string             `json:"name"`
-	Patterns []FilterPatternDto `json:"patterns"`
+	ID                int64              `json:"id"`
+	Name              string             `json:"name"`
+	UpgradeUntilScore int                `json:"upgrade_until_score"`
+	Patterns          []FilterPatternDto `json:"patterns"`
 }
 
 type FilterProfileListDto struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID                int64  `json:"id"`
+	Name              string `json:"name"`
+	UpgradeUntilScore int    `json:"upgrade_until_score"`
 }
 
 func ToFilterPatterns(requests []FilterPatternDto) []filterProfileModel.FilterPattern {
@@ -40,9 +43,10 @@ func ToFilterPatterns(requests []FilterPatternDto) []filterProfileModel.FilterPa
 
 func ToProfileDto(profile filterProfileModel.FilterProfile, patterns []filterProfileModel.FilterPattern) FilterProfileDto {
 	dto := FilterProfileDto{
-		ID:       profile.ID,
-		Name:     profile.Name,
-		Patterns: make([]FilterPatternDto, 0, len(patterns)),
+		ID:                profile.ID,
+		Name:              profile.Name,
+		UpgradeUntilScore: profile.UpgradeUntilScore,
+		Patterns:          make([]FilterPatternDto, 0, len(patterns)),
 	}
 	for _, pattern := range patterns {
 		dto.Patterns = append(dto.Patterns, FilterPatternDto{
@@ -57,7 +61,11 @@ func ToProfileDto(profile filterProfileModel.FilterProfile, patterns []filterPro
 func ToProfileListDto(profiles []filterProfileModel.FilterProfile) []FilterProfileListDto {
 	list := make([]FilterProfileListDto, 0, len(profiles))
 	for _, profile := range profiles {
-		list = append(list, FilterProfileListDto{ID: profile.ID, Name: profile.Name})
+		list = append(list, FilterProfileListDto{
+			ID:                profile.ID,
+			Name:              profile.Name,
+			UpgradeUntilScore: profile.UpgradeUntilScore,
+		})
 	}
 	return list
 }

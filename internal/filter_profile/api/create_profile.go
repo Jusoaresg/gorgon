@@ -39,7 +39,10 @@ func (h *Handler) CreateFilterProfile(c echo.Context) error {
 	}
 
 	id, err := h.FilterProfileRepo.Create(
-		filterProfileModel.FilterProfile{Name: request.Name},
+		filterProfileModel.FilterProfile{
+			Name:              request.Name,
+			UpgradeUntilScore: request.UpgradeUntilScore,
+		},
 		schema.ToFilterPatterns(request.Patterns),
 	)
 	if err != nil {

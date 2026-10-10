@@ -6,12 +6,13 @@ type PreferredPattern struct {
 }
 
 type Profile struct {
-	ID        int64
-	Name      string
-	Search    []string
-	Required  []string
-	Rejected  []string
-	Preferred []PreferredPattern
+	ID                int64
+	Name              string
+	UpgradeUntilScore int
+	Search            []string
+	Required          []string
+	Rejected          []string
+	Preferred         []PreferredPattern
 }
 
 type Result struct {

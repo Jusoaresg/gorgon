@@ -51,7 +51,11 @@ func (h *Handler) UpdateFilterProfile(c echo.Context) error {
 	}
 
 	err = h.FilterProfileRepo.Update(
-		filterProfileModel.FilterProfile{ID: id, Name: request.Name},
+		filterProfileModel.FilterProfile{
+			ID:                id,
+			Name:              request.Name,
+			UpgradeUntilScore: request.UpgradeUntilScore,
+		},
 		schema.ToFilterPatterns(request.Patterns),
 	)
 	if err != nil {
