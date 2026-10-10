@@ -9,25 +9,29 @@ import (
 	"github.com/jusoaresg/gorgon/external/prowlarr/schema"
 	"github.com/jusoaresg/gorgon/internal/episode/model"
 	episodeService "github.com/jusoaresg/gorgon/internal/episode/service"
+	episodeTorrentRepository "github.com/jusoaresg/gorgon/internal/episode_torrent/repository"
 	filter "github.com/jusoaresg/gorgon/internal/filter"
 	filterService "github.com/jusoaresg/gorgon/internal/filter/service"
-	"github.com/jusoaresg/gorgon/utils"
-
 	seasonRepository "github.com/jusoaresg/gorgon/internal/season/repository"
 	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
+	"github.com/jusoaresg/gorgon/utils"
 )
 
 type RssReleaseProcessor struct {
-	db         *sqlx.DB
-	showRepo   showRepository.ShowRepositoryInterface
-	seasonRepo seasonRepository.SeasonRepositoryInterface
+	db                 *sqlx.DB
+	showRepo           showRepository.ShowRepositoryInterface
+	seasonRepo         seasonRepository.SeasonRepositoryInterface
+	episodeTorrentRepo episodeTorrentRepository.EpisodeTorrentRepositoryInterface
+	downloader         episodeService.EpisodeDownloaderInterface
 }
 
 func NewRssReleaseProcessor(db *sqlx.DB) RssReleaseProcessor {
 	return RssReleaseProcessor{
-		db:         db,
-		showRepo:   showRepository.NewShowRepository(db),
-		seasonRepo: seasonRepository.NewSeasonRepository(db),
+		db:                 db,
+		showRepo:           showRepository.NewShowRepository(db),
+		seasonRepo:         seasonRepository.NewSeasonRepository(db),
+		episodeTorrentRepo: episodeTorrentRepository.NewEpisodeTorrentRepository(db),
+		downloader:         episodeService.NewEpisodeDownloader(db),
 	}
 }
 
@@ -55,7 +59,7 @@ func (rss *RssReleaseProcessor) RssProcessRelease(ep model.Episode, responses []
 	}
 
 	termKeys := make([]string, 0)
-	for _, pattern := range filterService.SearchPatterns(profile) {
+	for _, pattern := range filterService.SearchPatterns(profile, settings.ShowType) {
 		for _, name := range ctx.AllNames() {
 			query, err := filter.ExpandQuery(pattern, ctx, name)
 			if err != nil {
@@ -88,14 +92,65 @@ func (rss *RssReleaseProcessor) RssProcessRelease(ep model.Episode, responses []
 		return nil
 	}
 
+	bestResponse := processedResponses[0]
+	bestScore := episodeService.CalculateScore(bestResponse, profile, ctx)
+
+	// Exclusive upgrade rule on RSS feed: check existing episodes (downloaded or snatched)
+	isExisting := ep.Tracking == model.TrackingDownloaded || ep.Tracking == model.TrackingSnatched
+	if isExisting {
+		if profile == nil || profile.UpgradeUntilScore <= 0 {
+			logger.Debug("Episode already snatched/downloaded and cutoff upgrades are disabled for this profile",
+				slog.Int64("episode_id", ep.ID),
+				slog.String("tracking", ep.Tracking),
+			)
+			return nil
+		}
+
+		existingTorrent, err := rss.episodeTorrentRepo.GetByEpisodeID(ep.ID)
+		existingScore := 0
+		if err == nil {
+			existingScore = existingTorrent.Score
+		}
+
+		// Cutoff check: do not upgrade if current torrent already reached or exceeded cutoff score
+		if existingScore >= profile.UpgradeUntilScore {
+			logger.Debug("Current release has reached cutoff score, skipping upgrade",
+				slog.Int64("episode_id", ep.ID),
+				slog.Int("existing_score", existingScore),
+				slog.Int("cutoff", profile.UpgradeUntilScore),
+			)
+			return nil
+		}
+
+		// Score check: new release must have strictly higher score
+		if bestScore <= existingScore {
+			logger.Debug("Candidate release score is not strictly higher than existing score",
+				slog.Int64("episode_id", ep.ID),
+				slog.Int("candidate_score", bestScore),
+				slog.Int("existing_score", existingScore),
+			)
+			return nil
+		}
+
+		logger.Info("Triggering release upgrade via RSS feed",
+			slog.Int64("episode_id", ep.ID),
+			slog.Int64("show_id", ep.ShowID),
+			slog.Int("old_score", existingScore),
+			slog.Int("new_score", bestScore),
+			slog.Int("cutoff", profile.UpgradeUntilScore),
+			slog.String("new_release", bestResponse.Title),
+		)
+
+		return rss.downloader.UpgradeEpisode(ep, bestResponse, bestScore)
+	}
+
+	// Standard download for wanted or missing episodes
 	logger.Info(
 		"Downloading episode",
-		slog.String("title", processedResponses[0].Title),
+		slog.String("title", bestResponse.Title),
 		slog.Int64("show_id", ep.ShowID),
 		slog.Int64("episode_id", ep.ID),
+		slog.Int("score", bestScore),
 	)
-	episodeDownloader := episodeService.EpisodeDownloader{}
-	episodeDownloader.DownloadEpisode(ep, processedResponses[0])
-
-	return nil
+	return rss.downloader.DownloadEpisode(ep, bestResponse, bestScore)
 }

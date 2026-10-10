@@ -114,11 +114,16 @@ func fetchRssFeedWantedEpisodes() []model.Episode {
 	logger := config.GetLogger().WithGroup("worker").With("name", "fetchWantedEps")
 	db := config.GetSQLite()
 
-	episodeRepositoy := repository.NewEpisodeRepository(db)
+	episodeRepository := repository.NewEpisodeRepository(db)
 
-	episodes, err := episodeRepositoy.ListByTracking("wanted", "missing")
+	episodes, err := episodeRepository.ListByTracking(
+		model.TrackingWanted,
+		model.TrackingMissing,
+		model.TrackingSnatched,
+		model.TrackingDownloaded,
+	)
 	if err != nil {
-		logger.Error("Failed to list episodes by tracking", slog.String("error", err.Error()))
+		logger.Error("Failed to list episodes for RSS worker", slog.String("error", err.Error()))
 	}
 	return episodes
 }
