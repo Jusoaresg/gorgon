@@ -27,6 +27,7 @@ func (s *EpisodeTorrentRepository) Upsert(t model.EpisodeTorrent) (int64, error)
 		indexer,
 		info_url,
 		publish_date,
+		score,
 		created_at
 	)
 	VALUES (
@@ -36,6 +37,7 @@ func (s *EpisodeTorrentRepository) Upsert(t model.EpisodeTorrent) (int64, error)
 		:indexer,
 		:info_url,
 		:publish_date,
+		:score,
 		:created_at
 	)
 	ON CONFLICT(episode_id) DO UPDATE SET
@@ -44,6 +46,7 @@ func (s *EpisodeTorrentRepository) Upsert(t model.EpisodeTorrent) (int64, error)
 		indexer = :indexer,
 		info_url = :info_url,
 		publish_date = :publish_date,
+		score = :score,
 		created_at = :created_at
 	`
 	result, err := s.db.NamedExec(query, t)
@@ -76,6 +79,7 @@ func (s *EpisodeTorrentRepository) UpsertTx(tx *sqlx.Tx, t model.EpisodeTorrent)
 		indexer,
 		info_url,
 		publish_date,
+		score,
 		created_at
 	)
 	VALUES (
@@ -85,6 +89,7 @@ func (s *EpisodeTorrentRepository) UpsertTx(tx *sqlx.Tx, t model.EpisodeTorrent)
 		:indexer,
 		:info_url,
 		:publish_date,
+		:score,
 		:created_at
 	)
 	ON CONFLICT(episode_id) DO UPDATE SET
@@ -93,6 +98,7 @@ func (s *EpisodeTorrentRepository) UpsertTx(tx *sqlx.Tx, t model.EpisodeTorrent)
 		indexer = :indexer,
 		info_url = :info_url,
 		publish_date = :publish_date,
+		score = :score,
 		created_at = :created_at
 	`
 	result, err := tx.NamedExec(query, t)

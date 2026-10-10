@@ -16,10 +16,15 @@ type EpisodeTorrent struct {
 	Indexer     string `db:"indexer"`
 	InfoUrl     string `db:"info_url"`
 	PublishDate string `db:"publish_date"`
+	Score       int    `db:"score"`
 	CreatedAt   int64  `db:"created_at"`
 }
 
-func FromSearchResponse(episodeID int64, r prowlarrSchema.SearchResponse) EpisodeTorrent {
+func FromSearchResponse(episodeID int64, r prowlarrSchema.SearchResponse, score ...int) EpisodeTorrent {
+	s := 0
+	if len(score) > 0 {
+		s = score[0]
+	}
 	return EpisodeTorrent{
 		EpisodeId:   episodeID,
 		Hash:        r.InfoHash,
@@ -27,11 +32,16 @@ func FromSearchResponse(episodeID int64, r prowlarrSchema.SearchResponse) Episod
 		Indexer:     r.Indexer,
 		InfoUrl:     r.InfoUrl,
 		PublishDate: r.PublishDate,
+		Score:       s,
 		CreatedAt:   time.Now().Unix(),
 	}
 }
 
-func FromAddTorrentRequest(episodeID int64, r qbittorrentSchema.AddEpisodeTorrentRequest) EpisodeTorrent {
+func FromAddTorrentRequest(episodeID int64, r qbittorrentSchema.AddEpisodeTorrentRequest, score ...int) EpisodeTorrent {
+	s := 0
+	if len(score) > 0 {
+		s = score[0]
+	}
 	return EpisodeTorrent{
 		EpisodeId:   episodeID,
 		Hash:        r.InfoHash,
@@ -39,6 +49,7 @@ func FromAddTorrentRequest(episodeID int64, r qbittorrentSchema.AddEpisodeTorren
 		Indexer:     r.Indexer,
 		InfoUrl:     r.InfoUrl,
 		PublishDate: r.PublishDate,
+		Score:       s,
 		CreatedAt:   time.Now().Unix(),
 	}
 }

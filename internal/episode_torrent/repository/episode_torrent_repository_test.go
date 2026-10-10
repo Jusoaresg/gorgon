@@ -46,6 +46,7 @@ func MakeEpisodeTorrentWithDeps(db *sqlx.DB) model.EpisodeTorrent {
 		Indexer:     "TestIndexer",
 		InfoUrl:     "https://indexer.info/release/1",
 		PublishDate: "2026-08-01T00:00:00Z",
+		Score:       50,
 		CreatedAt:   1754000000,
 	}
 }
@@ -73,6 +74,7 @@ func TestEpisodeTorrentRepository_Upsert_Update(t *testing.T) {
 
 	torrent.Hash = "newhash1234"
 	torrent.Title = "Show.S01E01.720p.WEB-DL"
+	torrent.Score = 75
 	_, err = repo.Upsert(torrent)
 	assert.NoError(t, err)
 
@@ -80,6 +82,7 @@ func TestEpisodeTorrentRepository_Upsert_Update(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "newhash1234", result.Hash)
 	assert.Equal(t, "Show.S01E01.720p.WEB-DL", result.Title)
+	assert.Equal(t, 75, result.Score)
 }
 
 func TestEpisodeTorrentRepository_GetByEpisodeID_NotFound(t *testing.T) {
