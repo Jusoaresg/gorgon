@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"log/slog"
 
 	tvMazeService "github.com/jusoaresg/gorgon/external/tvmaze/service"
@@ -64,36 +65,65 @@ func UpdateSingleShowInfo(
 	logger *slog.Logger,
 	showId int64,
 ) (*dtos.ShowDto, error) {
-
+	// Stage 1: Fetch show from local database
 	show, err := showRepo.GetById(showId)
 	if err != nil {
-		logger.Error("Failed to fetch show from repository", slog.Int64("show_id", showId), slog.String("error", err.Error()))
-		return nil, err
+		logger.Error("Failed to fetch show from repository",
+			slog.Int64("show_id", showId),
+			slog.String("error", err.Error()),
+		)
+		return nil, fmt.Errorf("failed to fetch show %d from database: %w", showId, err)
 	}
 
+	// Stage 2: Fetch show details from TVMaze
 	showDTO, err := tvMazeService.SearchByTvMazeId(show.TvMazeID)
 	if err != nil {
-		logger.Error("Failed to fetch show info from TVMaze", slog.Int64("tvmaze_id", show.TvMazeID), slog.String("error", err.Error()))
-		return nil, err
+		logger.Error("Failed to fetch show info from TVMaze",
+			slog.Int64("show_id", showId),
+			slog.Int64("tvmaze_id", show.TvMazeID),
+			slog.String("error", err.Error()),
+		)
+		return nil, fmt.Errorf("failed to fetch show details from TVMaze for show %d (tvmaze_id %d): %w", showId, show.TvMazeID, err)
 	}
 
+	// Stage 3: Fetch episodes from TVMaze
 	episodesDTO, err := showManager.GetEpisodes(show.TvMazeID)
 	if err != nil {
-		logger.Error("Failed to fetch episodes from TVMaze", slog.Int64("tvmaze_id", show.TvMazeID), slog.String("error", err.Error()))
-		return nil, err
+		logger.Error("Failed to fetch episodes from TVMaze",
+			slog.Int64("show_id", showId),
+			slog.Int64("tvmaze_id", show.TvMazeID),
+			slog.String("error", err.Error()),
+		)
+		return nil, fmt.Errorf("failed to fetch episodes from TVMaze for show %d (tvmaze_id %d): %w", showId, show.TvMazeID, err)
 	}
 
+	// Stage 4: Fetch seasons from TVMaze
 	seasonsDTO, err := showManager.GetSeasons(show.TvMazeID)
 	if err != nil {
-		logger.Error("Failed to fetch seasons from TVMaze", slog.Int64("tvmaze_id", show.TvMazeID), slog.String("error", err.Error()))
-		return nil, err
+		logger.Error("Failed to fetch seasons from TVMaze",
+			slog.Int64("show_id", showId),
+			slog.Int64("tvmaze_id", show.TvMazeID),
+			slog.String("error", err.Error()),
+		)
+		return nil, fmt.Errorf("failed to fetch seasons from TVMaze for show %d (tvmaze_id %d): %w", showId, show.TvMazeID, err)
 	}
 
+	// Stage 5: Database transaction updating show and relations
 	err = showManager.UpdateShowWithRelations(*showDTO, *seasonsDTO, *episodesDTO)
 	if err != nil {
-		logger.Error("Failed to update show info", slog.Int64("tvmaze_id", show.TvMazeID), slog.String("error", err.Error()))
-		return nil, err
+		logger.Error("Failed to update show and relations in database transaction",
+			slog.Int64("show_id", showId),
+			slog.Int64("tvmaze_id", show.TvMazeID),
+			slog.String("error", err.Error()),
+		)
+		return nil, fmt.Errorf("failed to update show and relations in database for show %d (tvmaze_id %d): %w", showId, show.TvMazeID, err)
 	}
+
+	logger.Info("Successfully updated show info and relations",
+		slog.Int64("show_id", showId),
+		slog.Int64("tvmaze_id", show.TvMazeID),
+		slog.String("name", showDTO.Name),
+	)
 
 	return showDTO, nil
 }
