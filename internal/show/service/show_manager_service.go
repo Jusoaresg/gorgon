@@ -190,6 +190,34 @@ func (sm *ShowManagerService) UpdateShowWithRelations(
 	for _, episode := range episodes {
 		key := fmt.Sprintf("%d:%d", episode.Season, episode.Number)
 		tvmazeEpisodeKeys[key] = true
+
+		season, ok := seasonMap[episode.Season]
+		if !ok {
+			sm.logger.Info("auto-inserting missing season for episode",
+				slog.Int64("show_id", showModel.ID),
+				slog.Int("season_number", episode.Season),
+			)
+			newSeason := seasonModel.Season{
+				ShowID: showModel.ID,
+				Number: episode.Season,
+			}
+			createdSeasonID, err := sm.SeasonRepo.CreateTx(tx, newSeason)
+			if err != nil {
+				sm.logger.Error("failed to create missing season",
+					slog.Int64("show_id", showModel.ID),
+					slog.Int("season_number", episode.Season),
+					slog.String("error", err.Error()),
+				)
+				return fmt.Errorf("failed to create missing season %d: %w", episode.Season, err)
+			}
+			season = &seasonModel.Season{
+				ID:     createdSeasonID,
+				ShowID: showModel.ID,
+				Number: episode.Season,
+			}
+			seasonMap[episode.Season] = season
+		}
+
 		if existing, ok := episodeMap[key]; ok {
 			sm.logger.Info("updating episode", slog.Int64("show_id", showModel.ID), slog.Int("season", episode.Season), slog.String("episode_name", episode.Name))
 			existing.Name = episode.Name
@@ -199,23 +227,31 @@ func (sm *ShowManagerService) UpdateShowWithRelations(
 			// Converting string time to int64(unix)
 			dtoTime, err := utils.TimeStringToInt64(episode.AirStamp)
 			if err != nil {
-				return err
+				sm.logger.Warn("invalid airstamp for episode, skipping update",
+					slog.Int64("episode_id", existing.ID),
+					slog.String("airstamp", episode.AirStamp),
+					slog.String("error", err.Error()),
+				)
+				continue
 			}
 			existing.AirStamp = dtoTime
 
 			if err := sm.EpisodeRepo.UpdateTx(tx, *existing); err != nil {
-				return err
+				sm.logger.Warn("failed to update episode, continuing",
+					slog.Int64("episode_id", existing.ID),
+					slog.String("error", err.Error()),
+				)
+				continue
 			}
 		} else {
-			season := seasonMap[episode.Season]
-			if season == nil {
-				sm.logger.Error("missing season for episode", slog.Int("season_number", episode.Season))
-				return fmt.Errorf("season %d not found when creating episode", episode.Season)
-			}
-
 			dtoTime, err := utils.TimeStringToInt64(episode.AirStamp)
 			if err != nil {
-				return err
+				sm.logger.Warn("invalid airstamp for new episode, skipping create",
+					slog.String("name", episode.Name),
+					slog.String("airstamp", episode.AirStamp),
+					slog.String("error", err.Error()),
+				)
+				continue
 			}
 
 			newEpisode := episodeModel.Episode{
@@ -232,8 +268,13 @@ func (sm *ShowManagerService) UpdateShowWithRelations(
 
 			_, err = sm.EpisodeRepo.CreateTx(tx, newEpisode)
 			if err != nil {
-				//TODO: Error message
-				return err
+				sm.logger.Warn("failed to create episode, continuing without rollback",
+					slog.Int64("show_id", showModel.ID),
+					slog.Int("season", episode.Season),
+					slog.Int("number", episode.Number),
+					slog.String("error", err.Error()),
+				)
+				continue
 			}
 		}
 	}

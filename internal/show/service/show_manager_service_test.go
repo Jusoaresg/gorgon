@@ -178,34 +178,26 @@ func TestUpdateShowWithRelations_NewSeasonDoesNotViolateForeignKey(t *testing.T)
 	assert.Equal(t, "New Name", newName)
 }
 
-func TestUpdateShowWithRelations_RollbackOnErrorKeepsDataIntact(t *testing.T) {
+func TestUpdateShowWithRelations_MissingSeasonIsAutoCreated(t *testing.T) {
 	fx := setupUpdateShowTest(t)
 
-	showDTO := buildUpdateShowDTO(t, "Rolled Back Name", `[{"name": "Some Alias", "country": {"code": "us"}}]`)
+	showDTO := buildUpdateShowDTO(t, "Updated Name", `[{"name": "Some Alias", "country": {"code": "us"}}]`)
 	seasonsDTO := []dtos.SeasonDto{{Number: 7}}
 	episodesDTO := []dtos.EpisodeDto{
-		{Name: "Orphan Episode", Season: 8, Number: 1, Type: "scripted", AirStamp: "2026-01-01T00:00:00Z"},
+		{Name: "Season 8 Episode", Season: 8, Number: 1, Type: "scripted", AirStamp: "2026-01-01T00:00:00Z"},
 	}
 
 	err := fx.svc.UpdateShowWithRelations(showDTO, seasonsDTO, episodesDTO)
-	require.Error(t, err, "episode referencing unknown season should abort the transaction")
+	require.NoError(t, err, "episode referencing missing season should auto-create season and succeed")
 
 	var count int
-	err = fx.db.Get(&count, `SELECT COUNT(*) FROM shows WHERE name = 'Rolled Back Name'`)
+	err = fx.db.Get(&count, `SELECT COUNT(*) FROM seasons WHERE show_id = ? AND season_number = 8`, fx.showID)
 	require.NoError(t, err)
-	assert.Zero(t, count, "show update must be rolled back")
+	assert.Equal(t, 1, count, "season 8 should be auto-created")
 
-	err = fx.db.Get(&count, `SELECT COUNT(*) FROM seasons WHERE show_id = ?`, fx.showID)
+	err = fx.db.Get(&count, `SELECT COUNT(*) FROM episodes WHERE show_id = ? AND season = 8 AND number = 1`, fx.showID)
 	require.NoError(t, err)
-	assert.Equal(t, 2, count, "no extra seasons may survive a rolled back transaction")
-
-	err = fx.db.Get(&count, `SELECT COUNT(*) FROM show_aliases WHERE show_id = ?`, fx.showID)
-	require.NoError(t, err)
-	assert.Equal(t, 1, count, "no new alias may survive a rolled back transaction")
-
-	err = fx.db.Get(&count, `SELECT COUNT(*) FROM episodes WHERE show_id = ?`, fx.showID)
-	require.NoError(t, err)
-	assert.Equal(t, 1, count, "no new episode may survive a rolled back transaction")
+	assert.Equal(t, 1, count, "episode in auto-created season should be created")
 }
 
 func TestUpdateShowWithRelations_DeletedEpisode_RemovedWhenNotDownloadedOrSnatched(t *testing.T) {
