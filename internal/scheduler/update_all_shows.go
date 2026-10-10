@@ -83,17 +83,19 @@ func UpdateAllShowsWithContext(ctx context.Context, db *sqlx.DB) {
 				showOld.ID,
 			)
 			if err != nil {
+				logger.Error("failed to update show in batch, continuing to next show",
+					slog.Int64("show_id", showOld.ID),
+					slog.Int64("tv_maze_id", showOld.TvMazeID),
+					slog.String("title", showOld.Name),
+					slog.String("error", err.Error()),
+				)
+				time.Sleep(300 * time.Millisecond)
 				continue
 			}
 
 			updatedCount++
 
-			select {
-			case <-ctx.Done():
-				logger.Info("show updates stopped due to context cancellation")
-				return
-			case <-time.After(1 * time.Second):
-			}
+			time.Sleep(300 * time.Millisecond)
 		}
 	}
 
