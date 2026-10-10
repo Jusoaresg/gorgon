@@ -81,7 +81,12 @@
             <div class="profile-list">
                 {{ range .Profiles }}
                 <div class="profile-item">
-                    <span class="profile-name">{{ .Name }}</span>
+                    <div>
+                        <span class="profile-name">{{ .Name }}</span>
+                        {{ if gt .UpgradeUntilScore 0 }}
+                        <span class="badge" style="background: rgba(139, 92, 246, 0.15); color: var(--accent-purple-light); margin-left: 0.5rem; font-size: 0.7rem;">Cutoff: {{ .UpgradeUntilScore }}</span>
+                        {{ end }}
+                    </div>
                     <div class="profile-actions">
                         <button type="button" class="btn btn-outline btn-sm" onclick="editProfile({{ .ID }})">Edit</button>
                         <button
@@ -124,6 +129,12 @@
                 <div class="form-group">
                     <label>Profile Name</label>
                     <input type="text" name="name" placeholder="e.g. HD 1080p Multisub">
+                </div>
+
+                <div class="form-group">
+                    <label>Upgrade Until Score (Cutoff)</label>
+                    <input type="number" name="upgrade_until_score" min="0" placeholder="e.g. 50" value="0">
+                    <small class="text-secondary">RSS will automatically snatch releases until an episode reaches this score. Set 0 to disable automatic upgrades.</small>
                 </div>
 
                 <div class="form-group">
@@ -207,6 +218,7 @@
                 var form = document.getElementById('profile-form');
                 form.dataset.editingId = id;
                 form.querySelector('[name=name]').value = data.name || '';
+                form.querySelector('[name=upgrade_until_score]').value = data.upgrade_until_score || 0;
                 var rows = document.getElementById('pattern-rows');
                 rows.innerHTML = '';
                 (data.patterns || []).forEach(function (p) {
@@ -224,6 +236,7 @@
         var form = document.getElementById('profile-form');
         delete form.dataset.editingId;
         form.querySelector('[name=name]').value = '';
+        form.querySelector('[name=upgrade_until_score]').value = 0;
         document.getElementById('pattern-rows').innerHTML = '';
         document.getElementById('profile-form-title').textContent = 'New Profile';
         document.getElementById('profile-cancel-btn').style.display = 'none';
@@ -241,6 +254,8 @@
             window.toast('Profile name is required', 'error');
             return;
         }
+
+        var upgradeUntilScore = parseInt(form.querySelector('[name=upgrade_until_score]').value || '0', 10);
 
         var patterns = [];
         document.querySelectorAll('#pattern-rows .pattern-row').forEach(function (row) {
@@ -260,7 +275,7 @@
         fetch(url, {
             method: method,
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: name, patterns: patterns })
+            body: JSON.stringify({ name: name, upgrade_until_score: upgradeUntilScore, patterns: patterns })
         })
             .then(function (resp) {
                 return resp.json().then(function (body) { return { ok: resp.ok, body: body }; });
