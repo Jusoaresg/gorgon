@@ -13,8 +13,13 @@ func getQualityScore(t schema.SearchResponse) int {
 	possibleQuality["720"] = 10
 	possibleQuality["480"] = 0
 
+	name := t.Filename
+	if name == "" {
+		name = t.Title
+	}
+
 	for key, quality := range possibleQuality {
-		if strings.Contains(t.Filename, key) {
+		if strings.Contains(name, key) {
 			return quality
 		}
 	}

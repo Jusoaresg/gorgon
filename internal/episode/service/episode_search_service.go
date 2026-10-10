@@ -116,8 +116,8 @@ func (s *EpisodeSearchService) ProcessSingleEpisode(episodeID int) error {
 	}
 
 	best := passed[0]
-	s.logger.Debug("Final chosen torrent", slog.String("filename", best.Filename))
-	if err := s.Downloader.DownloadEpisode(episode, best.SearchResponse); err != nil {
+	s.logger.Debug("Final chosen torrent", slog.String("filename", best.Filename), slog.Int("score", best.Score))
+	if err := s.Downloader.DownloadEpisode(episode, best.SearchResponse, best.Score); err != nil {
 		s.emitSearchFinished(episode, show, SearchResultError, err.Error())
 		return err
 	}

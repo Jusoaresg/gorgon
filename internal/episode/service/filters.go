@@ -134,3 +134,13 @@ func EvaluateAndSortResponses(responses []schema.SearchResponse, profile *filter
 	return evaluated
 }
 
+// CalculateScore evaluates the release against the filter profile and base score heuristics, returning the total score.
+func CalculateScore(response schema.SearchResponse, profile *filter.Profile, ctx filter.Context) int {
+	name := response.Filename
+	if name == "" {
+		name = response.Title
+	}
+	result := filter.Evaluate(profile, ctx, name)
+	return result.PreferredScore + baseScore(response)
+}
+

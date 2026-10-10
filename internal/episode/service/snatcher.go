@@ -19,7 +19,7 @@ import (
 
 var DbWriteMutex sync.Mutex
 
-func SnatchEpisode(episode *model.Episode, response prowlarrSchema.SearchResponse) error {
+func SnatchEpisode(episode *model.Episode, response prowlarrSchema.SearchResponse, score ...int) error {
 	logger := config.GetLogger()
 	safeDB := config.GetSafeDB()
 
@@ -27,7 +27,7 @@ func SnatchEpisode(episode *model.Episode, response prowlarrSchema.SearchRespons
 	episodeTorrentRepo := episodeTorrentRepository.NewEpisodeTorrentRepository(safeDB.Db)
 
 	episode.Tracking = model.TrackingSnatched
-	episodeTorrent := episodeTorrentModel.FromSearchResponse(episode.ID, response)
+	episodeTorrent := episodeTorrentModel.FromSearchResponse(episode.ID, response, score...)
 
 	err := concurrency.WithWriteLock(safeDB.Write, func() error {
 		if _, err := episodeTorrentRepo.Upsert(episodeTorrent); err != nil {
