@@ -119,19 +119,27 @@ func (s *EpisodeSearchService) ProcessSingleEpisode(episodeID int) error {
 
 	best := passed[0]
 
+	settings, err := filterService.ResolveSettings(s.db, show.ID)
+	if err != nil {
+		s.emitSearchFinished(episode, show, SearchResultError, err.Error())
+		return err
+	}
+	profile, err := filterService.ResolveProfile(s.db, settings)
+	if err != nil {
+		s.emitSearchFinished(episode, show, SearchResultError, err.Error())
+		return err
+	}
+	ctx, err := filterService.BuildContext(s.db, show, episode.Season, episode.Number, settings)
+	if err != nil {
+		s.emitSearchFinished(episode, show, SearchResultError, err.Error())
+		return err
+	}
+
+	// Canonical score based only on intrinsic quality (resolution + preferred tags)
+	score := CalculateScore(best.SearchResponse, profile, ctx)
+
 	// Check if this episode is eligible for upgrade instead of fresh download
 	if episode.Tracking == model.TrackingDownloaded || episode.Tracking == model.TrackingSnatched {
-		settings, err := filterService.ResolveSettings(s.db, show.ID)
-		if err != nil {
-			s.emitSearchFinished(episode, show, SearchResultError, err.Error())
-			return err
-		}
-		profile, err := filterService.ResolveProfile(s.db, settings)
-		if err != nil {
-			s.emitSearchFinished(episode, show, SearchResultError, err.Error())
-			return err
-		}
-
 		epTorrentRepo := episodeTorrentRepository.NewEpisodeTorrentRepository(s.db)
 		existingTorrent, err := epTorrentRepo.GetByEpisodeID(episode.ID)
 		existingScore := 0
@@ -139,11 +147,11 @@ func (s *EpisodeSearchService) ProcessSingleEpisode(episodeID int) error {
 			existingScore = existingTorrent.Score
 		}
 
-		if !ShouldUpgrade(episode.Tracking, profile, existingScore, best.Score) {
+		if !ShouldUpgrade(episode.Tracking, profile, existingScore, score) {
 			s.logger.Info("Episode already exists and does not qualify for an upgrade",
 				slog.Int64("episode_id", episode.ID),
 				slog.Int("existing_score", existingScore),
-				slog.Int("candidate_score", best.Score),
+				slog.Int("candidate_score", score),
 			)
 			s.emitSearchFinished(episode, show, SearchResultNoResults, "Already downloaded with sufficient quality")
 			return nil
@@ -152,9 +160,9 @@ func (s *EpisodeSearchService) ProcessSingleEpisode(episodeID int) error {
 		s.logger.Info("Triggering release upgrade via search",
 			slog.Int64("episode_id", episode.ID),
 			slog.Int("old_score", existingScore),
-			slog.Int("new_score", best.Score),
+			slog.Int("new_score", score),
 		)
-		if err := s.Downloader.UpgradeEpisode(episode, best.SearchResponse, best.Score); err != nil {
+		if err := s.Downloader.UpgradeEpisode(episode, best.SearchResponse, score); err != nil {
 			s.emitSearchFinished(episode, show, SearchResultError, err.Error())
 			return err
 		}
@@ -162,8 +170,8 @@ func (s *EpisodeSearchService) ProcessSingleEpisode(episodeID int) error {
 		return nil
 	}
 
-	s.logger.Debug("Final chosen torrent", slog.String("filename", best.Filename), slog.Int("score", best.Score))
-	if err := s.Downloader.DownloadEpisode(episode, best.SearchResponse, best.Score); err != nil {
+	s.logger.Debug("Final chosen torrent", slog.String("filename", best.Filename), slog.Int("score", score))
+	if err := s.Downloader.DownloadEpisode(episode, best.SearchResponse, score); err != nil {
 		s.emitSearchFinished(episode, show, SearchResultError, err.Error())
 		return err
 	}
