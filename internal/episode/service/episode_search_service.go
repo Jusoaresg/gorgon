@@ -8,6 +8,8 @@ import (
 	episodeEvents "github.com/jusoaresg/gorgon/internal/episode/events"
 	"github.com/jusoaresg/gorgon/internal/episode/model"
 	episodeRepository "github.com/jusoaresg/gorgon/internal/episode/repository"
+	episodeTorrentRepository "github.com/jusoaresg/gorgon/internal/episode_torrent/repository"
+	filterService "github.com/jusoaresg/gorgon/internal/filter/service"
 	showModel "github.com/jusoaresg/gorgon/internal/show/model"
 	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
 )
@@ -116,6 +118,50 @@ func (s *EpisodeSearchService) ProcessSingleEpisode(episodeID int) error {
 	}
 
 	best := passed[0]
+
+	// Check if this episode is eligible for upgrade instead of fresh download
+	if episode.Tracking == model.TrackingDownloaded || episode.Tracking == model.TrackingSnatched {
+		settings, err := filterService.ResolveSettings(s.db, show.ID)
+		if err != nil {
+			s.emitSearchFinished(episode, show, SearchResultError, err.Error())
+			return err
+		}
+		profile, err := filterService.ResolveProfile(s.db, settings)
+		if err != nil {
+			s.emitSearchFinished(episode, show, SearchResultError, err.Error())
+			return err
+		}
+
+		epTorrentRepo := episodeTorrentRepository.NewEpisodeTorrentRepository(s.db)
+		existingTorrent, err := epTorrentRepo.GetByEpisodeID(episode.ID)
+		existingScore := 0
+		if err == nil {
+			existingScore = existingTorrent.Score
+		}
+
+		if !ShouldUpgrade(episode.Tracking, profile, existingScore, best.Score) {
+			s.logger.Info("Episode already exists and does not qualify for an upgrade",
+				slog.Int64("episode_id", episode.ID),
+				slog.Int("existing_score", existingScore),
+				slog.Int("candidate_score", best.Score),
+			)
+			s.emitSearchFinished(episode, show, SearchResultNoResults, "Already downloaded with sufficient quality")
+			return nil
+		}
+
+		s.logger.Info("Triggering release upgrade via search",
+			slog.Int64("episode_id", episode.ID),
+			slog.Int("old_score", existingScore),
+			slog.Int("new_score", best.Score),
+		)
+		if err := s.Downloader.UpgradeEpisode(episode, best.SearchResponse, best.Score); err != nil {
+			s.emitSearchFinished(episode, show, SearchResultError, err.Error())
+			return err
+		}
+		s.emitSearchFinished(episode, show, SearchResultSnatched, "")
+		return nil
+	}
+
 	s.logger.Debug("Final chosen torrent", slog.String("filename", best.Filename), slog.Int("score", best.Score))
 	if err := s.Downloader.DownloadEpisode(episode, best.SearchResponse, best.Score); err != nil {
 		s.emitSearchFinished(episode, show, SearchResultError, err.Error())
