@@ -6,6 +6,7 @@ import (
 
 	"github.com/jusoaresg/gorgon/config"
 	"github.com/jusoaresg/gorgon/external/prowlarr/schema"
+	"github.com/jusoaresg/gorgon/internal/episode/model"
 	"github.com/jusoaresg/gorgon/internal/filter"
 )
 
@@ -24,8 +25,7 @@ type EvaluatedResult struct {
 }
 
 // FilterAndScoreResponses applies episode matching and the profile gates to every response,
-// dropping releases that do not match the target episode or are rejected,
-// and sorting the survivors by score (preferred words + quality + health) descending.
+// sorting candidates by intrinsic quality with swarm health (seeders) used for tie-breaking.
 func FilterAndScoreResponses(responses []schema.SearchResponse, profile *filter.Profile, ctx filter.Context) []schema.SearchResponse {
 	logger := config.GetLogger()
 
@@ -52,9 +52,12 @@ func FilterAndScoreResponses(responses []schema.SearchResponse, profile *filter.
 			continue
 		}
 
+		// Rank order considers preferred pattern score + resolution + swarm health bonus
+		rankScore := result.PreferredScore + getQualityScore(response) + getHealthScore(response)
+
 		scored = append(scored, ScoredResponse{
 			Response: response,
-			Score:    result.PreferredScore + baseScore(response),
+			Score:    rankScore,
 		})
 	}
 
@@ -69,8 +72,8 @@ func FilterAndScoreResponses(responses []schema.SearchResponse, profile *filter.
 	return filtered
 }
 
-// IsGoodResponse reports whether a response cleared the episode match and profile gates and
-// scored high enough to stop searching extra aliases.
+// IsGoodResponse reports whether a response cleared episode match and profile gates and
+// achieved a high quality score to halt secondary alias queries.
 func IsGoodResponse(response schema.SearchResponse, profile *filter.Profile, ctx filter.Context) bool {
 	const goodScore = 60
 
@@ -83,7 +86,7 @@ func IsGoodResponse(response schema.SearchResponse, profile *filter.Profile, ctx
 		return false
 	}
 
-	return result.PreferredScore+baseScore(response) >= goodScore
+	return result.PreferredScore+getQualityScore(response)+getHealthScore(response) >= goodScore
 }
 
 // EvaluateResponse computes episode matching, filter profile compliance, release metadata, and score for a single release.
@@ -134,13 +137,28 @@ func EvaluateAndSortResponses(responses []schema.SearchResponse, profile *filter
 	return evaluated
 }
 
-// CalculateScore evaluates the release against the filter profile and base score heuristics, returning the total score.
+// CalculateScore computes the canonical intrinsic release quality score (preferred tags + resolution).
+// Swarm health is intentionally excluded so ephemeral seed counts do not pollute cutoff thresholds.
 func CalculateScore(response schema.SearchResponse, profile *filter.Profile, ctx filter.Context) int {
 	name := response.Filename
 	if name == "" {
 		name = response.Title
 	}
 	result := filter.Evaluate(profile, ctx, name)
-	return result.PreferredScore + baseScore(response)
+	return result.PreferredScore + getQualityScore(response)
 }
 
+// ShouldUpgrade determines whether a candidate release qualifies as an upgrade over an existing episode.
+func ShouldUpgrade(tracking string, profile *filter.Profile, currentScore, candidateScore int) bool {
+	isExisting := tracking == model.TrackingDownloaded || tracking == model.TrackingSnatched
+	if !isExisting {
+		return false
+	}
+	if profile == nil || profile.UpgradeUntilScore <= 0 {
+		return false
+	}
+	if currentScore >= profile.UpgradeUntilScore {
+		return false
+	}
+	return candidateScore > currentScore
+}

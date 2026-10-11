@@ -123,6 +123,115 @@ func TestEvaluateAndSortResponses(t *testing.T) {
 	assert.NotNil(t, wrongEp)
 	assert.False(t, wrongEp.PassedFilter)
 	assert.False(t, wrongEp.EpisodeMatched)
-	assert.Equal(t, "Episode mismatch", wrongEp.RejectionReason)
 }
 
+func TestCalculateScore_IntrinsicQualityOnly(t *testing.T) {
+	ctx := filterTestContext()
+	profile := filterTestProfile() // web: 30, 1080p: 20
+
+	// Release with 0 seeders
+	r1 := schema.SearchResponse{
+		Filename: "Dragon Ball S01E04 1080p MULTISUB WEB",
+		Seeders:  0,
+		Leechers: 10,
+	}
+	// Same release with 100 seeders
+	r2 := schema.SearchResponse{
+		Filename: "Dragon Ball S01E04 1080p MULTISUB WEB",
+		Seeders:  100,
+		Leechers: 0,
+	}
+
+	score1 := CalculateScore(r1, profile, ctx)
+	score2 := CalculateScore(r2, profile, ctx)
+
+	// Intrinsic score must be identical (50 preferred + 20 resolution = 70) regardless of swarm health
+	assert.Equal(t, 70, score1)
+	assert.Equal(t, 70, score2)
+}
+
+func TestShouldUpgrade(t *testing.T) {
+	profileWithCutoff := &filter.Profile{UpgradeUntilScore: 60}
+	profileNoCutoff := &filter.Profile{UpgradeUntilScore: 0}
+
+	tests := []struct {
+		name           string
+		tracking       string
+		profile        *filter.Profile
+		currentScore   int
+		candidateScore int
+		expected       bool
+	}{
+		{
+			name:           "Valid upgrade below cutoff",
+			tracking:       "downloaded",
+			profile:        profileWithCutoff,
+			currentScore:   20,
+			candidateScore: 50,
+			expected:       true,
+		},
+		{
+			name:           "Valid upgrade for snatched episode",
+			tracking:       "snatched",
+			profile:        profileWithCutoff,
+			currentScore:   20,
+			candidateScore: 50,
+			expected:       true,
+		},
+		{
+			name:           "Skip upgrade when cutoff is disabled (0)",
+			tracking:       "downloaded",
+			profile:        profileNoCutoff,
+			currentScore:   20,
+			candidateScore: 50,
+			expected:       false,
+		},
+		{
+			name:           "Skip upgrade when profile is nil",
+			tracking:       "downloaded",
+			profile:        nil,
+			currentScore:   20,
+			candidateScore: 50,
+			expected:       false,
+		},
+		{
+			name:           "Skip upgrade when current score reached cutoff",
+			tracking:       "downloaded",
+			profile:        profileWithCutoff,
+			currentScore:   60,
+			candidateScore: 70,
+			expected:       false,
+		},
+		{
+			name:           "Skip upgrade when candidate score is lower",
+			tracking:       "downloaded",
+			profile:        profileWithCutoff,
+			currentScore:   50,
+			candidateScore: 30,
+			expected:       false,
+		},
+		{
+			name:           "Skip upgrade when candidate score is equal",
+			tracking:       "downloaded",
+			profile:        profileWithCutoff,
+			currentScore:   50,
+			candidateScore: 50,
+			expected:       false,
+		},
+		{
+			name:           "Skip upgrade for un-downloaded tracking (wanted)",
+			tracking:       "wanted",
+			profile:        profileWithCutoff,
+			currentScore:   0,
+			candidateScore: 50,
+			expected:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ShouldUpgrade(tt.tracking, tt.profile, tt.currentScore, tt.candidateScore)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}

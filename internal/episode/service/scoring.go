@@ -38,6 +38,12 @@ func getHealthScore(t schema.SearchResponse) int {
 	return health
 }
 
+// BaseQualityScore calculates intrinsic release quality (resolution only).
+func BaseQualityScore(t schema.SearchResponse) int {
+	return getQualityScore(t)
+}
+
+// BaseScore provides backward compatibility combining quality and swarm health.
 func BaseScore(t schema.SearchResponse) int {
 	return getQualityScore(t) + getHealthScore(t)
 }
@@ -45,4 +51,3 @@ func BaseScore(t schema.SearchResponse) int {
 func baseScore(t schema.SearchResponse) int {
 	return BaseScore(t)
 }
-
