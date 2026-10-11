@@ -11,11 +11,16 @@ import (
 
 type EpisodeDownloaderInterface interface {
 	DownloadEpisode(ep model.Episode, response schema.SearchResponse) error
+	DownloadEpisodeTorrent(ep model.Episode, response schema.SearchResponse) error
 }
 
 type EpisodeDownloader struct{}
 
 func (d *EpisodeDownloader) DownloadEpisode(ep model.Episode, response schema.SearchResponse) error {
+	return d.DownloadEpisodeTorrent(ep, response)
+}
+
+func (d *EpisodeDownloader) DownloadEpisodeTorrent(ep model.Episode, response schema.SearchResponse) error {
 	logger := config.GetLogger()
 
 	torrentService, err := qbittorrentService.NewQBittorrentService(logger)
@@ -39,3 +44,4 @@ func (d *EpisodeDownloader) DownloadEpisode(ep model.Episode, response schema.Se
 
 	return nil
 }
+

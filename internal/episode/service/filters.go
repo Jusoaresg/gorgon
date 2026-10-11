@@ -9,9 +9,18 @@ import (
 	"github.com/jusoaresg/gorgon/internal/filter"
 )
 
-type scoredResponse struct {
-	response schema.SearchResponse
-	score    int
+type ScoredResponse struct {
+	Response schema.SearchResponse
+	Score    int
+}
+
+type EvaluatedResult struct {
+	schema.SearchResponse
+	EpisodeMatched  bool
+	PassedFilter    bool
+	Score           int
+	RejectionReason string
+	Metadata        filter.ReleaseMetadata
 }
 
 // FilterAndScoreResponses applies episode matching and the profile gates to every response,
@@ -20,7 +29,7 @@ type scoredResponse struct {
 func FilterAndScoreResponses(responses []schema.SearchResponse, profile *filter.Profile, ctx filter.Context) []schema.SearchResponse {
 	logger := config.GetLogger()
 
-	var scored []scoredResponse
+	var scored []ScoredResponse
 	for _, response := range responses {
 		if !filter.MatchEpisode(response.Filename, ctx.Season, ctx.Episode, ctx.ShowType) {
 			logger.Debug(
@@ -43,19 +52,19 @@ func FilterAndScoreResponses(responses []schema.SearchResponse, profile *filter.
 			continue
 		}
 
-		scored = append(scored, scoredResponse{
-			response: response,
-			score:    result.PreferredScore + baseScore(response),
+		scored = append(scored, ScoredResponse{
+			Response: response,
+			Score:    result.PreferredScore + baseScore(response),
 		})
 	}
 
 	sort.Slice(scored, func(i, j int) bool {
-		return scored[i].score > scored[j].score
+		return scored[i].Score > scored[j].Score
 	})
 
 	filtered := make([]schema.SearchResponse, 0, len(scored))
 	for _, s := range scored {
-		filtered = append(filtered, s.response)
+		filtered = append(filtered, s.Response)
 	}
 	return filtered
 }
@@ -75,5 +84,53 @@ func IsGoodResponse(response schema.SearchResponse, profile *filter.Profile, ctx
 	}
 
 	return result.PreferredScore+baseScore(response) >= goodScore
+}
+
+// EvaluateResponse computes episode matching, filter profile compliance, release metadata, and score for a single release.
+func EvaluateResponse(response schema.SearchResponse, profile *filter.Profile, ctx filter.Context) EvaluatedResult {
+	epMatch := filter.MatchEpisode(response.Filename, ctx.Season, ctx.Episode, ctx.ShowType)
+	eval := filter.Evaluate(profile, ctx, response.Filename)
+	score := BaseScore(response) + eval.PreferredScore
+	meta := filter.ParseReleaseMetadata(response.Filename)
+
+	item := EvaluatedResult{
+		SearchResponse: response,
+		EpisodeMatched: epMatch,
+		Score:          score,
+		Metadata:       meta,
+	}
+
+	if !epMatch {
+		item.PassedFilter = false
+		item.RejectionReason = "Episode mismatch"
+	} else if !eval.Passed {
+		item.PassedFilter = false
+		item.RejectionReason = eval.RejectedReason
+	} else {
+		item.PassedFilter = true
+	}
+
+	return item
+}
+
+// EvaluateAndSortResponses evaluates all candidate responses and sorts them:
+// passed first, then episode matched, then by score descending.
+func EvaluateAndSortResponses(responses []schema.SearchResponse, profile *filter.Profile, ctx filter.Context) []EvaluatedResult {
+	evaluated := make([]EvaluatedResult, 0, len(responses))
+	for _, r := range responses {
+		evaluated = append(evaluated, EvaluateResponse(r, profile, ctx))
+	}
+
+	sort.Slice(evaluated, func(i, j int) bool {
+		if evaluated[i].PassedFilter != evaluated[j].PassedFilter {
+			return evaluated[i].PassedFilter
+		}
+		if evaluated[i].EpisodeMatched != evaluated[j].EpisodeMatched {
+			return evaluated[i].EpisodeMatched
+		}
+		return evaluated[i].Score > evaluated[j].Score
+	})
+
+	return evaluated
 }
 
