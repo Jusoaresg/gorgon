@@ -98,6 +98,30 @@ func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *servic
 		showRepo := showRepository.NewShowRepository(config.GetSQLite())
 		show, err := showRepo.GetById(ep.ShowID)
 
+		// Atomic cleanup of prior files/symlinks if this download is an upgrade
+		existingContents, _ := episodeContentRepo.ListByEpisodeId(ep.ID)
+		downloadFolder, _ := paths.GetTorrentDownloadFolder()
+		for _, ec := range existingContents {
+			isSameFile := false
+			for _, newContent := range contents {
+				if newContent.Name == ec.Name {
+					isSameFile = true
+					break
+				}
+			}
+			if !isSameFile && downloadFolder != "" && ec.Name != "" {
+				_, _ = utils.DeleteFile(downloadFolder, ec.Name)
+			}
+			if cfg != nil && show.Name != "" {
+				_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, *ep, ec)
+			}
+			_ = episodeContentRepo.DeleteById(ec.ID)
+		}
+		if cfg != nil && show.Name != "" {
+			_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, *ep, epContentModel.EpisodeContent{})
+			_ = utils.CleanBrokenSymlinksInSeason(cfg.ShowsFolder, show.Name, ep.Season)
+		}
+
 		tx, err := config.GetSQLite().Beginx()
 		if err != nil {
 			return err
