@@ -12,7 +12,7 @@ import (
 
 type EpisodeDownloaderInterface interface {
 	DownloadEpisode(ep model.Episode, response schema.SearchResponse, score ...int) error
-	DownloadEpisodeTorrent(ep model.Episode, response schema.SearchResponse) error
+	DownloadEpisodeTorrent(ep model.Episode, response schema.SearchResponse, score ...int) error
 	UpgradeEpisode(ep model.Episode, response schema.SearchResponse, newScore int) error
 }
 
@@ -60,8 +60,8 @@ func (d *EpisodeDownloader) DownloadEpisode(ep model.Episode, response schema.Se
 	return nil
 }
 
-func (d *EpisodeDownloader) DownloadEpisodeTorrent(ep model.Episode, response schema.SearchResponse) error {
-	return d.DownloadEpisode(ep, response)
+func (d *EpisodeDownloader) DownloadEpisodeTorrent(ep model.Episode, response schema.SearchResponse, score ...int) error {
+	return d.DownloadEpisode(ep, response, score...)
 }
 
 func (d *EpisodeDownloader) UpgradeEpisode(ep model.Episode, response schema.SearchResponse, newScore int) error {

@@ -10,6 +10,7 @@ import (
 	"github.com/jusoaresg/gorgon/config"
 	prowlarrSchema "github.com/jusoaresg/gorgon/external/prowlarr/schema"
 	episodeService "github.com/jusoaresg/gorgon/internal/episode/service"
+	filterService "github.com/jusoaresg/gorgon/internal/filter/service"
 	"github.com/jusoaresg/gorgon/pkg/schemas"
 	"github.com/jusoaresg/gorgon/utils"
 	"github.com/labstack/echo/v4"
@@ -247,12 +248,19 @@ func (h *Handler) DownloadEpisodeTorrent(c echo.Context) error {
 		Guid:        request.Guid,
 		InfoHash:    request.InfoHash,
 		Title:       request.Title,
+		Filename:    request.Title,
 		Indexer:     request.Indexer,
 		InfoUrl:     request.InfoUrl,
 		PublishDate: request.PublishDate,
 	}
 
-	if err := h.EpisodeSearchSvc.Downloader.DownloadEpisodeTorrent(ep, searchResponse); err != nil {
+	show, _ := h.ShowRepo.GetById(ep.ShowID)
+	settings, _ := filterService.ResolveSettings(h.DB, show.ID)
+	profile, _ := filterService.ResolveProfile(h.DB, settings)
+	ctx, _ := filterService.BuildContext(h.DB, show, ep.Season, ep.Number, settings)
+	manualScore := episodeService.CalculateScore(searchResponse, profile, ctx)
+
+	if err := h.EpisodeSearchSvc.Downloader.DownloadEpisodeTorrent(ep, searchResponse, manualScore); err != nil {
 		logger.Error("failed to download episode torrent", slog.Int64("episode_id", ep.ID), slog.String("error", err.Error()))
 		schemas.SendError(c, 500, "Failed to download torrent: "+err.Error())
 		return nil

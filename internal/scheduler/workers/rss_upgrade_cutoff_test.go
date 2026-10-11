@@ -38,6 +38,10 @@ func (m *mockDownloader) DownloadEpisode(ep episodeModel.Episode, response prowl
 	return nil
 }
 
+func (m *mockDownloader) DownloadEpisodeTorrent(ep episodeModel.Episode, response prowlarrSchema.SearchResponse, score ...int) error {
+	return m.DownloadEpisode(ep, response, score...)
+}
+
 func (m *mockDownloader) UpgradeEpisode(ep episodeModel.Episode, response prowlarrSchema.SearchResponse, newScore int) error {
 	m.upgradeCalled = true
 	m.lastScore = newScore
