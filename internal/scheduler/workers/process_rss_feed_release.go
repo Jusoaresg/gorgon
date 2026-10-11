@@ -95,39 +95,19 @@ func (rss *RssReleaseProcessor) RssProcessRelease(ep model.Episode, responses []
 	bestResponse := processedResponses[0]
 	bestScore := episodeService.CalculateScore(bestResponse, profile, ctx)
 
-	// Exclusive upgrade rule on RSS feed: check existing episodes (downloaded or snatched)
-	isExisting := ep.Tracking == model.TrackingDownloaded || ep.Tracking == model.TrackingSnatched
-	if isExisting {
-		if profile == nil || profile.UpgradeUntilScore <= 0 {
-			logger.Debug("Episode already snatched/downloaded and cutoff upgrades are disabled for this profile",
-				slog.Int64("episode_id", ep.ID),
-				slog.String("tracking", ep.Tracking),
-			)
-			return nil
-		}
-
+	// Handle upgrades for episodes already snatched or downloaded
+	if ep.Tracking == model.TrackingDownloaded || ep.Tracking == model.TrackingSnatched {
 		existingTorrent, err := rss.episodeTorrentRepo.GetByEpisodeID(ep.ID)
 		existingScore := 0
 		if err == nil {
 			existingScore = existingTorrent.Score
 		}
 
-		// Cutoff check: do not upgrade if current torrent already reached or exceeded cutoff score
-		if existingScore >= profile.UpgradeUntilScore {
-			logger.Debug("Current release has reached cutoff score, skipping upgrade",
+		if !episodeService.ShouldUpgrade(ep.Tracking, profile, existingScore, bestScore) {
+			logger.Debug("Candidate release does not qualify for upgrade",
 				slog.Int64("episode_id", ep.ID),
 				slog.Int("existing_score", existingScore),
-				slog.Int("cutoff", profile.UpgradeUntilScore),
-			)
-			return nil
-		}
-
-		// Score check: new release must have strictly higher score
-		if bestScore <= existingScore {
-			logger.Debug("Candidate release score is not strictly higher than existing score",
-				slog.Int64("episode_id", ep.ID),
 				slog.Int("candidate_score", bestScore),
-				slog.Int("existing_score", existingScore),
 			)
 			return nil
 		}
