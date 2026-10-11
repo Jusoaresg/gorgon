@@ -31,10 +31,11 @@ func FilterAndScoreResponses(responses []schema.SearchResponse, profile *filter.
 
 	var scored []ScoredResponse
 	for _, response := range responses {
-		if !filter.MatchEpisode(response.Filename, ctx.Season, ctx.Episode, ctx.ShowType) {
+		name := releaseName(response)
+		if !filter.MatchEpisode(name, ctx.Season, ctx.Episode, ctx.ShowType) {
 			logger.Debug(
 				"Release rejected by episode mismatch",
-				slog.String("filename", response.Filename),
+				slog.String("filename", name),
 				slog.Int("season", ctx.Season),
 				slog.Int("episode", ctx.Episode),
 				slog.String("show_type", ctx.ShowType),
@@ -42,11 +43,11 @@ func FilterAndScoreResponses(responses []schema.SearchResponse, profile *filter.
 			continue
 		}
 
-		result := filter.Evaluate(profile, ctx, response.Filename)
+		result := filter.Evaluate(profile, ctx, name)
 		if !result.Passed {
 			logger.Debug(
 				"Release rejected by filter",
-				slog.String("filename", response.Filename),
+				slog.String("filename", name),
 				slog.String("reason", result.RejectedReason),
 			)
 			continue
@@ -76,12 +77,13 @@ func FilterAndScoreResponses(responses []schema.SearchResponse, profile *filter.
 // achieved a high quality score to halt secondary alias queries.
 func IsGoodResponse(response schema.SearchResponse, profile *filter.Profile, ctx filter.Context) bool {
 	const goodScore = 60
+	name := releaseName(response)
 
-	if !filter.MatchEpisode(response.Filename, ctx.Season, ctx.Episode, ctx.ShowType) {
+	if !filter.MatchEpisode(name, ctx.Season, ctx.Episode, ctx.ShowType) {
 		return false
 	}
 
-	result := filter.Evaluate(profile, ctx, response.Filename)
+	result := filter.Evaluate(profile, ctx, name)
 	if !result.Passed {
 		return false
 	}
@@ -89,12 +91,13 @@ func IsGoodResponse(response schema.SearchResponse, profile *filter.Profile, ctx
 	return result.PreferredScore+getQualityScore(response)+getHealthScore(response) >= goodScore
 }
 
-// EvaluateResponse computes episode matching, filter profile compliance, release metadata, and score for a single release.
+// EvaluateResponse computes episode matching, filter profile compliance, release metadata, and canonical score for a single release.
 func EvaluateResponse(response schema.SearchResponse, profile *filter.Profile, ctx filter.Context) EvaluatedResult {
-	epMatch := filter.MatchEpisode(response.Filename, ctx.Season, ctx.Episode, ctx.ShowType)
-	eval := filter.Evaluate(profile, ctx, response.Filename)
-	score := BaseScore(response) + eval.PreferredScore
-	meta := filter.ParseReleaseMetadata(response.Filename)
+	name := releaseName(response)
+	epMatch := filter.MatchEpisode(name, ctx.Season, ctx.Episode, ctx.ShowType)
+	eval := filter.Evaluate(profile, ctx, name)
+	score := CalculateScore(response, profile, ctx)
+	meta := filter.ParseReleaseMetadata(name)
 
 	item := EvaluatedResult{
 		SearchResponse: response,
@@ -117,7 +120,7 @@ func EvaluateResponse(response schema.SearchResponse, profile *filter.Profile, c
 }
 
 // EvaluateAndSortResponses evaluates all candidate responses and sorts them:
-// passed first, then episode matched, then by score descending.
+// passed first, then episode matched, then by canonical score descending, and seeders as tie-breaker.
 func EvaluateAndSortResponses(responses []schema.SearchResponse, profile *filter.Profile, ctx filter.Context) []EvaluatedResult {
 	evaluated := make([]EvaluatedResult, 0, len(responses))
 	for _, r := range responses {
@@ -131,7 +134,10 @@ func EvaluateAndSortResponses(responses []schema.SearchResponse, profile *filter
 		if evaluated[i].EpisodeMatched != evaluated[j].EpisodeMatched {
 			return evaluated[i].EpisodeMatched
 		}
-		return evaluated[i].Score > evaluated[j].Score
+		if evaluated[i].Score != evaluated[j].Score {
+			return evaluated[i].Score > evaluated[j].Score
+		}
+		return evaluated[i].Seeders > evaluated[j].Seeders
 	})
 
 	return evaluated
@@ -140,10 +146,7 @@ func EvaluateAndSortResponses(responses []schema.SearchResponse, profile *filter
 // CalculateScore computes the canonical intrinsic release quality score (preferred tags + resolution).
 // Swarm health is intentionally excluded so ephemeral seed counts do not pollute cutoff thresholds.
 func CalculateScore(response schema.SearchResponse, profile *filter.Profile, ctx filter.Context) int {
-	name := response.Filename
-	if name == "" {
-		name = response.Title
-	}
+	name := releaseName(response)
 	result := filter.Evaluate(profile, ctx, name)
 	return result.PreferredScore + getQualityScore(response)
 }

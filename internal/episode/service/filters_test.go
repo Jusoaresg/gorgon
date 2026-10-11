@@ -235,3 +235,43 @@ func TestShouldUpgrade(t *testing.T) {
 		})
 	}
 }
+
+func TestReleaseName_FallbackToTitle(t *testing.T) {
+	withFilename := schema.SearchResponse{Filename: "custom.mkv", Title: "fallback.mkv"}
+	assert.Equal(t, "custom.mkv", releaseName(withFilename))
+
+	withoutFilename := schema.SearchResponse{Filename: "", Title: "title.mkv"}
+	assert.Equal(t, "title.mkv", releaseName(withoutFilename))
+}
+
+func TestGetQualityScore_4KSupport(t *testing.T) {
+	r4k := schema.SearchResponse{Title: "Show.S01E01.2160p.UHD.WEB-DL.mkv"}
+	assert.Equal(t, 30, getQualityScore(r4k))
+
+	r1080 := schema.SearchResponse{Title: "Show.S01E01.1080p.WEB-DL.mkv"}
+	assert.Equal(t, 20, getQualityScore(r1080))
+
+	r720 := schema.SearchResponse{Title: "Show.S01E01.720p.HDTV.mkv"}
+	assert.Equal(t, 10, getQualityScore(r720))
+
+	r480 := schema.SearchResponse{Title: "Show.S01E01.480p.mkv"}
+	assert.Equal(t, 0, getQualityScore(r480))
+}
+
+func TestEvaluateResponse_UsesTitleWhenFilenameEmpty(t *testing.T) {
+	ctx := filterTestContext()
+	profile := filterTestProfile() // web: 30, 1080p: 20
+
+	// Release with empty Filename, Title only (standard Prowlarr format)
+	r := schema.SearchResponse{
+		Title:   "Dragon Ball S01E04 1080p MULTISUB WEB",
+		Seeders: 25,
+	}
+
+	result := EvaluateResponse(r, profile, ctx)
+	assert.True(t, result.PassedFilter)
+	assert.True(t, result.EpisodeMatched)
+	assert.Equal(t, "1080P", result.Metadata.Resolution)
+	// Score must match canonical CalculateScore (30 web + 20 1080p + 20 resolution = 70)
+	assert.Equal(t, 70, result.Score)
+}

@@ -6,22 +6,28 @@ import (
 	"github.com/jusoaresg/gorgon/external/prowlarr/schema"
 )
 
-func getQualityScore(t schema.SearchResponse) int {
-	possibleQuality := make(map[string]int)
-	possibleQuality["2560"] = 20
-	possibleQuality["1080"] = 20
-	possibleQuality["720"] = 10
-	possibleQuality["480"] = 0
-
-	name := t.Filename
-	if name == "" {
-		name = t.Title
+// releaseName returns the release filename, falling back to title if filename is empty.
+func releaseName(t schema.SearchResponse) string {
+	if t.Filename != "" {
+		return t.Filename
 	}
+	return t.Title
+}
 
-	for key, quality := range possibleQuality {
-		if strings.Contains(name, key) {
-			return quality
-		}
+func getQualityScore(t schema.SearchResponse) int {
+	name := strings.ToLower(releaseName(t))
+
+	if strings.Contains(name, "2160") || strings.Contains(name, "4k") || strings.Contains(name, "uhd") {
+		return 30
+	}
+	if strings.Contains(name, "1080") || strings.Contains(name, "2560") {
+		return 20
+	}
+	if strings.Contains(name, "720") {
+		return 10
+	}
+	if strings.Contains(name, "480") {
+		return 0
 	}
 	return 0
 }
