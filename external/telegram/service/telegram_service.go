@@ -49,7 +49,52 @@ func NewTelegramClient(logger *slog.Logger) *TelegramService {
 	}
 }
 
-func (s *TelegramService) SendMessageWithMarkup(token, chatID, message string, replyMarkup *schema.InlineKeyboardMarkup) error {
+func BuildPersistentReplyKeyboard() *schema.ReplyKeyboardMarkup {
+	return &schema.ReplyKeyboardMarkup{
+		ResizeKeyboard:        true,
+		IsPersistent:          true,
+		InputFieldPlaceholder: "Type / for commands or tap a button...",
+		Keyboard: [][]schema.KeyboardButton{
+			{
+				{Text: "📅 Today"},
+				{Text: "📥 Downloads"},
+			},
+			{
+				{Text: "📺 Shows"},
+				{Text: "⏳ Wanted"},
+			},
+		},
+	}
+}
+
+func DefaultBotCommands() []schema.BotCommand {
+	return []schema.BotCommand{
+		{Command: "summary", Description: "Today's scheduled releases"},
+		{Command: "downloads", Description: "Active transfers & torrent controls"},
+		{Command: "shows", Description: "Library series & control center"},
+		{Command: "wanted", Description: "Released missing/wanted episodes"},
+		{Command: "add", Description: "Search TVMaze & add a new series"},
+		{Command: "ping", Description: "Check bot connection & refresh keyboard"},
+	}
+}
+
+func (s *TelegramService) RegisterBotCommands(token string) error {
+	if strings.TrimSpace(token) == "" {
+		return nil
+	}
+	resp, err := s.ApiService.Post(fmt.Sprintf("bot%s/setMyCommands", token), schema.SetMyCommandsRequest{
+		Commands: DefaultBotCommands(),
+	}, nil, nil)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("telegram setMyCommands error: status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func (s *TelegramService) sendRawMessage(token, chatID, message string, replyMarkup any) error {
 	resp, err := s.ApiService.Post(fmt.Sprintf("bot%s/sendMessage", token), schema.SendMessage{
 		ChatID:    chatID,
 		Text:      message,
@@ -71,8 +116,24 @@ func (s *TelegramService) SendMessageWithMarkup(token, chatID, message string, r
 	return nil
 }
 
+func (s *TelegramService) SendMessageWithMarkup(token, chatID, message string, replyMarkup *schema.InlineKeyboardMarkup) error {
+	var markup any
+	if replyMarkup != nil {
+		markup = replyMarkup
+	}
+	return s.sendRawMessage(token, chatID, message, markup)
+}
+
+func (s *TelegramService) SendMessageWithReplyKeyboard(token, chatID, message string, replyKeyboard *schema.ReplyKeyboardMarkup) error {
+	var markup any
+	if replyKeyboard != nil {
+		markup = replyKeyboard
+	}
+	return s.sendRawMessage(token, chatID, message, markup)
+}
+
 func (s *TelegramService) SendMessage(token, chatID, message string) error {
-	return s.SendMessageWithMarkup(token, chatID, message, nil)
+	return s.sendRawMessage(token, chatID, message, nil)
 }
 
 func (s *TelegramService) SendNotification(message string) error {

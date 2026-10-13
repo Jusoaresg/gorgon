@@ -57,8 +57,9 @@ func TestTelegramConnection(c echo.Context) error {
 	}
 
 	client := service.NewTelegramClient(logger)
+	_ = client.RegisterBotCommands(apiKey)
 	msg := schema.FormatTestNotification()
-	if err := client.SendMessage(apiKey, chatID, msg); err != nil {
+	if err := client.SendMessageWithReplyKeyboard(apiKey, chatID, msg, service.BuildPersistentReplyKeyboard()); err != nil {
 		logger.Error("Failed to send test telegram message", slog.String("error", err.Error()))
 		schemas.SendError(c, 400, fmt.Sprintf("Failed to send test message: %s", err.Error()), TestResponse{
 			ToastMessage: fmt.Sprintf("Telegram test failed: %s", err.Error()),

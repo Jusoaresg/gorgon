@@ -126,6 +126,19 @@ func TestNormalizeBotCommand_And_AuthGuard(t *testing.T) {
 		t.Fatalf("unexpected normalized command: cmd=%q arg=%q", cmd, arg)
 	}
 
+	btnCmd, btnArg := normalizeBotCommand("📥 Downloads")
+	if btnCmd != "/downloads" || btnArg != "" {
+		t.Fatalf("expected reply keyboard button to map to /downloads, got cmd=%q arg=%q", btnCmd, btnArg)
+	}
+
+	SetAwaitingAddShow("12345", true)
+	if !ConsumeAwaitingAddShow("12345") {
+		t.Fatal("expected awaiting /add state to be consumed once")
+	}
+	if ConsumeAwaitingAddShow("12345") {
+		t.Fatal("expected awaiting /add state to be cleared after consumption")
+	}
+
 	if !isAuthorizedChat("", "999") {
 		t.Fatal("expected empty configured chat ID to allow setup messages")
 	}

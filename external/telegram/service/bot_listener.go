@@ -48,8 +48,32 @@ type EpisodeSearchTrigger interface {
 var (
 	listenerStateMu   sync.RWMutex
 	lastSeenByToken   = make(map[string]string)
+	awaitingAddByChat = make(map[string]bool)
 	pausePollingUntil time.Time
 )
+
+func SetAwaitingAddShow(chatID string, awaiting bool) {
+	if chatID == "" {
+		return
+	}
+	listenerStateMu.Lock()
+	if awaiting {
+		awaitingAddByChat[chatID] = true
+	} else {
+		delete(awaitingAddByChat, chatID)
+	}
+	listenerStateMu.Unlock()
+}
+
+func ConsumeAwaitingAddShow(chatID string) bool {
+	listenerStateMu.Lock()
+	defer listenerStateMu.Unlock()
+	if awaitingAddByChat[chatID] {
+		delete(awaitingAddByChat, chatID)
+		return true
+	}
+	return false
+}
 
 func RecordSeenChatID(token, chatID string) {
 	if token == "" || chatID == "" {
@@ -97,6 +121,7 @@ func StartTelegramBotListener(ctx context.Context, db *sqlx.DB, searchTriggers .
 	go func() {
 		logger.Info("Starting Telegram bot listener")
 		var offset int64 = 0
+		var registeredCommandsToken string
 
 		client := NewTelegramClient(logger)
 
@@ -131,6 +156,14 @@ func StartTelegramBotListener(ctx context.Context, db *sqlx.DB, searchTriggers .
 			}
 
 			token := cfg.TelegramBotApiKey
+			if token != registeredCommandsToken {
+				if err := client.RegisterBotCommands(token); err != nil {
+					logger.Warn("Failed to register Telegram bot commands", slog.String("error", err.Error()))
+				} else {
+					registeredCommandsToken = token
+					logger.Info("Registered Telegram slash commands for autocomplete")
+				}
+			}
 
 			endpoint := fmt.Sprintf("bot%s/getUpdates?offset=%d&timeout=20", token, offset)
 			var resp schema.GetUpdatesResponse
@@ -205,6 +238,18 @@ func normalizeBotCommand(rawText string) (cmd string, arg string) {
 	if text == "" {
 		return "", ""
 	}
+
+	switch text {
+	case "📅 Today":
+		return "/summary", ""
+	case "📥 Downloads":
+		return "/downloads", ""
+	case "📺 Shows":
+		return "/shows", ""
+	case "⏳ Wanted":
+		return "/wanted", ""
+	}
+
 	parts := strings.Fields(text)
 	first := parts[0]
 	if strings.HasPrefix(first, "/") {
@@ -230,15 +275,32 @@ func handleBotCommand(
 ) {
 	cmd, arg := normalizeBotCommand(rawText)
 
+	if !strings.HasPrefix(cmd, "/") {
+		if ConsumeAwaitingAddShow(chatID) {
+			query := strings.TrimSpace(rawText)
+			logger.Info("Received series name for interactive /add", slog.String("chatID", chatID), slog.String("query", query))
+			handleAddShowCommand(client, token, chatID, db, logger, query)
+		}
+		return
+	}
+
+	// Any slash command or persistent keyboard tap cancels pending /add input
+	SetAwaitingAddShow(chatID, false)
+
 	switch cmd {
 	case "/summary", "/today":
 		logger.Info("Received summary command", slog.String("chatID", chatID))
 		summaryText := GenerateDailySummaryText(db, time.Now())
-		_ = client.SendMessage(token, chatID, summaryText)
+		_ = client.SendMessageWithReplyKeyboard(token, chatID, summaryText, BuildPersistentReplyKeyboard())
 
-	case "/ping":
-		logger.Info("Received ping command", slog.String("chatID", chatID))
-		_ = client.SendMessage(token, chatID, "🏓 <b>Pong!</b> Gorgon remote control is online.")
+	case "/ping", "/start", "/help", "/menu":
+		logger.Info("Received ping/start command", slog.String("chatID", chatID))
+		_ = client.SendMessageWithReplyKeyboard(
+			token,
+			chatID,
+			"🏓 <b>Pong!</b> Gorgon remote control is online.\n\n<i>Use the quick buttons below or type <code>/</code> to autocomplete commands.</i>",
+			BuildPersistentReplyKeyboard(),
+		)
 
 	case "/downloads", "/dl":
 		logger.Info("Received downloads command", slog.String("chatID", chatID))
@@ -255,36 +317,7 @@ func handleBotCommand(
 	case "/add":
 		logger.Info("Received add command", slog.String("chatID", chatID), slog.String("arg", arg))
 		handleAddShowCommand(client, token, chatID, db, logger, arg)
-
-	case "/start", "/help", "/menu":
-		logger.Info("Received start/help command", slog.String("chatID", chatID))
-		sendRemoteMenu(client, token, chatID)
 	}
-}
-
-func sendRemoteMenu(client *TelegramService, token, chatID string) {
-	welcome := "🎛️ <b>Gorgon Remote Control</b>\n\n" +
-		"Control your media server from anywhere:\n" +
-		"• <code>/summary</code> — Today's scheduled releases\n" +
-		"• <code>/downloads</code> — Active transfers & torrent controls\n" +
-		"• <code>/shows</code> — Library series & control center\n" +
-		"• <code>/wanted</code> — Released missing/wanted episodes\n" +
-		"• <code>/add &lt;name&gt;</code> — Search TVMaze & add a new series\n" +
-		"• <code>/ping</code> — Check bot connection"
-
-	markup := &schema.InlineKeyboardMarkup{
-		InlineKeyboard: [][]schema.InlineKeyboardButton{
-			{
-				{Text: "📅 Today", CallbackData: "cmd:summary"},
-				{Text: "📥 Downloads", CallbackData: "cmd:downloads"},
-			},
-			{
-				{Text: "📺 Shows", CallbackData: "cmd:shows"},
-				{Text: "⏳ Wanted", CallbackData: "cmd:wanted"},
-			},
-		},
-	}
-	_ = client.SendMessageWithMarkup(token, chatID, welcome, markup)
 }
 
 func sendOrEditBotMessage(client *TelegramService, token, chatID string, text string, markup *schema.InlineKeyboardMarkup, editMsgID ...int64) {
@@ -725,7 +758,18 @@ func handleAddShowCommand(
 ) {
 	query = strings.TrimSpace(query)
 	if query == "" {
-		_ = client.SendMessage(token, chatID, "➕ <b>Add Show</b>\n\nUsage: <code>/add &lt;series name&gt;</code>\nExample: <code>/add Dandadan</code>")
+		SetAwaitingAddShow(chatID, true)
+		markup := &schema.InlineKeyboardMarkup{
+			InlineKeyboard: [][]schema.InlineKeyboardButton{
+				{{Text: "← Cancel", CallbackData: "ad_cancel"}},
+			},
+		}
+		_ = client.SendMessageWithMarkup(
+			token,
+			chatID,
+			"➕ <b>Add Series</b>\n\n<i>Send the name of the series you want to search on TVMaze:</i>",
+			markup,
+		)
 		return
 	}
 	sendAddShowResultsPaginated(client, token, chatID, db, logger, query, 0)
@@ -938,8 +982,17 @@ func handleBotCallback(
 	searchTrigger EpisodeSearchTrigger,
 	logger *slog.Logger,
 ) {
+	SetAwaitingAddShow(chatID, false)
 	data := strings.TrimSpace(cb.Data)
 	switch {
+	case data == "ad_cancel":
+		_ = client.AnswerCallbackQuery(token, cb.ID, "Cancelled")
+		var msgID int64
+		if cb.Message != nil {
+			msgID = cb.Message.MessageID
+		}
+		sendOrEditBotMessage(client, token, chatID, "✖️ <i>Add series cancelled.</i>", nil, msgID)
+
 	case data == "cmd:summary":
 		_ = client.AnswerCallbackQuery(token, cb.ID, "Loading today's summary...")
 		summaryText := GenerateDailySummaryText(db, time.Now())
