@@ -275,3 +275,30 @@ func TestEvaluateResponse_UsesTitleWhenFilenameEmpty(t *testing.T) {
 	// Score must match canonical CalculateScore (30 web + 20 1080p + 20 resolution = 70)
 	assert.Equal(t, 70, result.Score)
 }
+
+func TestFilterAndEvaluate_RejectsBlacklistedByHashOrTitle(t *testing.T) {
+	ctx := filterTestContext()
+	ctx.Blacklist = []filter.BlacklistedRelease{
+		{
+			InfoHash:     "deadbeef1234",
+			ReleaseTitle: "Dragon Ball S01E04 1080p MULTISUB WEB",
+			Reason:       "stalledDL timeout",
+		},
+	}
+	profile := filterTestProfile()
+
+	responses := []schema.SearchResponse{
+		{Filename: "Dragon Ball S01E04 1080p MULTISUB WEB", InfoHash: "DEADBEEF1234", Seeders: 50},
+		{Filename: "Dragon.Ball.S01E04.1080p.MULTISUB.WEB", InfoHash: "", Seeders: 40},
+		{Filename: "Dragon Ball S01E04 720p MULTISUB", InfoHash: "goodhash999", Seeders: 10},
+	}
+
+	filtered := FilterAndScoreResponses(responses, profile, ctx)
+	assert.Len(t, filtered, 1)
+	assert.Equal(t, "goodhash999", filtered[0].InfoHash)
+
+	eval := EvaluateResponse(responses[0], profile, ctx)
+	assert.False(t, eval.PassedFilter)
+	assert.True(t, eval.Blacklisted)
+	assert.Contains(t, eval.RejectionReason, "Blacklisted")
+}

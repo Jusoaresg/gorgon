@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"errors"
 	"regexp"
+	"time"
 
 	"github.com/jmoiron/sqlx"
+	blacklistRepository "github.com/jusoaresg/gorgon/internal/blacklist/repository"
 	"github.com/jusoaresg/gorgon/internal/filter"
 	filterProfileModel "github.com/jusoaresg/gorgon/internal/filter_profile/model"
 	filterProfileRepository "github.com/jusoaresg/gorgon/internal/filter_profile/repository"
@@ -142,6 +144,19 @@ func BuildContext(db *sqlx.DB, show showModel.Show, season, episode int, setting
 		Season:   season,
 		Episode:  episode,
 		ShowType: showType,
+	}
+
+	if db != nil && show.ID > 0 {
+		blRepo := blacklistRepository.NewBlacklistRepository(db)
+		if entries, err := blRepo.ListActiveByShowID(show.ID, time.Now().Unix()); err == nil {
+			for _, e := range entries {
+				ctx.Blacklist = append(ctx.Blacklist, filter.BlacklistedRelease{
+					InfoHash:     e.InfoHash,
+					ReleaseTitle: e.ReleaseTitle,
+					Reason:       e.Reason,
+				})
+			}
+		}
 	}
 
 	if !settings.UseAliases {

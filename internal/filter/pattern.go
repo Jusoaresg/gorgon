@@ -13,14 +13,21 @@ const (
 	DefaultAnimeSeasonSearchPattern = "{alias} S{season} - {episode:00}"
 )
 
+type BlacklistedRelease struct {
+	InfoHash     string
+	ReleaseTitle string
+	Reason       string
+}
+
 // Context carries the information used to expand placeholders in a pattern.
 // Names should already be normalized before being passed in.
 type Context struct {
-	Show     string
-	Aliases  []string
-	Season   int
-	Episode  int
-	ShowType string
+	Show      string
+	Aliases   []string
+	Season    int
+	Episode   int
+	ShowType  string
+	Blacklist []BlacklistedRelease
 }
 
 

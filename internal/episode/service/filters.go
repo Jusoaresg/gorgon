@@ -52,9 +52,39 @@ type EvaluatedResult struct {
 	schema.SearchResponse
 	EpisodeMatched  bool
 	PassedFilter    bool
+	Blacklisted     bool
 	Score           int
 	RejectionReason string
 	Metadata        filter.ReleaseMetadata
+}
+
+// CheckBlacklisted checks whether a release matches any active entry in ctx.Blacklist by InfoHash or normalized title.
+func CheckBlacklisted(response schema.SearchResponse, ctx filter.Context) (bool, string) {
+	if len(ctx.Blacklist) == 0 {
+		return false, ""
+	}
+
+	respHash := strings.TrimSpace(response.InfoHash)
+	normTitle := utils.NormalizeTitle(releaseName(response))
+
+	for _, bl := range ctx.Blacklist {
+		if respHash != "" && bl.InfoHash != "" && strings.EqualFold(respHash, strings.TrimSpace(bl.InfoHash)) {
+			reason := bl.Reason
+			if reason == "" {
+				reason = "blacklisted release"
+			}
+			return true, reason
+		}
+		if normTitle != "" && bl.ReleaseTitle != "" && normTitle == utils.NormalizeTitle(bl.ReleaseTitle) {
+			reason := bl.Reason
+			if reason == "" {
+				reason = "blacklisted release"
+			}
+			return true, reason
+		}
+	}
+
+	return false, ""
 }
 
 // FilterAndScoreResponses applies episode matching and the profile gates to every response,
@@ -65,6 +95,16 @@ func FilterAndScoreResponses(responses []schema.SearchResponse, profile *filter.
 	var scored []ScoredResponse
 	for _, response := range responses {
 		name := releaseName(response)
+		if blacklisted, reason := CheckBlacklisted(response, ctx); blacklisted {
+			logger.Debug(
+				"Release rejected by blacklist",
+				slog.String("filename", name),
+				slog.String("info_hash", response.InfoHash),
+				slog.String("reason", reason),
+			)
+			continue
+		}
+
 		if !MatchShowTitle(name, ctx) || !filter.MatchEpisode(name, ctx.Season, ctx.Episode, ctx.ShowType) {
 			logger.Debug(
 				"Release rejected by show or episode mismatch",
@@ -112,6 +152,10 @@ func IsGoodResponse(response schema.SearchResponse, profile *filter.Profile, ctx
 	const goodScore = 60
 	name := releaseName(response)
 
+	if blacklisted, _ := CheckBlacklisted(response, ctx); blacklisted {
+		return false
+	}
+
 	if !MatchShowTitle(name, ctx) || !filter.MatchEpisode(name, ctx.Season, ctx.Episode, ctx.ShowType) {
 		return false
 	}
@@ -142,6 +186,10 @@ func EvaluateResponse(response schema.SearchResponse, profile *filter.Profile, c
 	if !epMatch {
 		item.PassedFilter = false
 		item.RejectionReason = "Episode mismatch"
+	} else if blacklisted, reason := CheckBlacklisted(response, ctx); blacklisted {
+		item.PassedFilter = false
+		item.Blacklisted = true
+		item.RejectionReason = "Blacklisted (" + reason + ")"
 	} else if !eval.Passed {
 		item.PassedFilter = false
 		item.RejectionReason = eval.RejectedReason

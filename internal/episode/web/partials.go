@@ -9,6 +9,7 @@ import (
 
 	"github.com/jusoaresg/gorgon/config"
 	prowlarrSchema "github.com/jusoaresg/gorgon/external/prowlarr/schema"
+	blacklistRepository "github.com/jusoaresg/gorgon/internal/blacklist/repository"
 	episodeService "github.com/jusoaresg/gorgon/internal/episode/service"
 	filterService "github.com/jusoaresg/gorgon/internal/filter/service"
 	"github.com/jusoaresg/gorgon/pkg/schemas"
@@ -253,6 +254,10 @@ func (h *Handler) DownloadEpisodeTorrent(c echo.Context) error {
 		InfoUrl:     request.InfoUrl,
 		PublishDate: request.PublishDate,
 	}
+
+	// If the user manually forces a download in interactive search, clear any matching blacklist entry
+	blRepo := blacklistRepository.NewBlacklistRepository(h.DB)
+	_ = blRepo.DeleteByHashOrTitle(ep.ShowID, request.InfoHash, request.Title)
 
 	show, _ := h.ShowRepo.GetById(ep.ShowID)
 	settings, _ := filterService.ResolveSettings(h.DB, show.ID)

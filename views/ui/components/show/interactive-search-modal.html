@@ -587,6 +587,8 @@
                 </span>
                 {{ if .PassedFilter }}
                     <span class="badge-status badge-score">✓ Score: +{{ .Score }}</span>
+                {{ else if .Blacklisted }}
+                    <span class="badge-status badge-rejected" title="{{ .RejectionReason }}">🚫 {{ .RejectionReason }}</span>
                 {{ else if not .EpisodeMatched }}
                     <span class="badge-status badge-mismatch">✗ {{ .RejectionReason }}</span>
                 {{ else }}
