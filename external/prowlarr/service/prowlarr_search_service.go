@@ -151,3 +151,26 @@ func (p *ProwlarrSearchService) SearchByType(request *schema.SearchByTypeRequest
 	}
 	return p.APIService.Get(fmt.Sprintf("/api/v1/search?%s", params.Encode()), &model)
 }
+
+// FetchRssFeed queries Prowlarr with an empty query to retrieve the latest releases across enabled indexers.
+func (p *ProwlarrSearchService) FetchRssFeed(limit int, model *[]schema.SearchResponse, indexerIds ...int) error {
+	if err := p.waitAndLock(context.Background()); err != nil {
+		return err
+	}
+	defer p.unlock()
+
+	if limit <= 0 {
+		limit = 100
+	}
+
+	params := url.Values{}
+	params.Set("query", "")
+	params.Set("type", "search")
+	params.Set("limit", strconv.Itoa(limit))
+	params.Set("apikey", p.ApiKey)
+	for _, id := range indexerIds {
+		params.Add("indexerIds", strconv.Itoa(id))
+	}
+
+	return p.APIService.Get(fmt.Sprintf("/api/v1/search?%s", params.Encode()), &model)
+}
