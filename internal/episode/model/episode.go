@@ -24,7 +24,8 @@ type Episode struct {
 	Season   int    `db:"season"`
 	AirStamp int64  `db:"airstamp"`
 
-	Tracking string `db:"tracking"`
+	Tracking       string `db:"tracking"`
+	LastSearchedAt int64  `db:"last_searched_at"`
 }
 
 func (e *Episode) Create(
