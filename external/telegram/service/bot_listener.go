@@ -388,27 +388,57 @@ func sendDownloadsStatus(client *TelegramService, token, chatID string, db *sqlx
 	sendOrEditBotMessage(client, token, chatID, strings.TrimSpace(sb.String()), &schema.InlineKeyboardMarkup{InlineKeyboard: rows}, editMsgID...)
 }
 
+const showsPageSize = 5
+
 func sendShowsList(client *TelegramService, token, chatID string, db *sqlx.DB, filterQuery string) {
+	sendShowsListPaginated(client, token, chatID, db, filterQuery, 0)
+}
+
+func sendShowsListPaginated(client *TelegramService, token, chatID string, db *sqlx.DB, filterQuery string, page int, editMsgID ...int64) {
+	cleanQuery := strings.TrimSpace(filterQuery)
 	agg := showManager.NewShowAggregatorServiceWithDb(db)
-	shows, err := agg.ListFullShowsFiltered(strings.TrimSpace(filterQuery), "")
+	shows, err := agg.ListFullShowsFiltered(cleanQuery, "")
 	if err != nil || len(shows) == 0 {
-		_ = client.SendMessage(token, chatID, "📺 <b>Library Shows</b>\n\n<i>No shows found in library. Use <code>/add &lt;name&gt;</code> to add one!</i>")
+		sendOrEditBotMessage(
+			client,
+			token,
+			chatID,
+			"📺 <b>Library Shows</b>\n\n<i>No shows found in library. Use <code>/add &lt;name&gt;</code> to add one!</i>",
+			nil,
+			editMsgID...,
+		)
 		return
 	}
 
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("📺 <b>Library Shows (%d)</b>\n\n", len(shows)))
-
-	var rows [][]schema.InlineKeyboardButton
-	limit := len(shows)
-	if limit > 8 {
-		limit = 8
+	totalShows := len(shows)
+	totalPages := (totalShows + showsPageSize - 1) / showsPageSize
+	if page < 0 {
+		page = 0
+	}
+	if page >= totalPages {
+		page = totalPages - 1
 	}
 
-	for i := 0; i < limit; i++ {
+	start := page * showsPageSize
+	end := start + showsPageSize
+	if end > totalShows {
+		end = totalShows
+	}
+
+	var sb strings.Builder
+	if totalPages > 1 {
+		sb.WriteString(fmt.Sprintf("📺 <b>Library Shows (%d)</b> • <i>Page %d/%d</i>\n\n", totalShows, page+1, totalPages))
+	} else {
+		sb.WriteString(fmt.Sprintf("📺 <b>Library Shows (%d)</b>\n\n", totalShows))
+	}
+
+	var rows [][]schema.InlineKeyboardButton
+
+	for i := start; i < end; i++ {
 		s := shows[i]
 		downloaded := 0
 		monitored := 0
+		wanted := 0
 		for _, ep := range s.Episodes {
 			if ep.Tracking == episodeModel.TrackingDownloaded {
 				downloaded++
@@ -416,26 +446,113 @@ func sendShowsList(client *TelegramService, token, chatID string, db *sqlx.DB, f
 			if ep.Tracking != episodeModel.TrackingSkipped {
 				monitored++
 			}
+			if ep.Tracking == episodeModel.TrackingWanted || ep.Tracking == episodeModel.TrackingMissing {
+				wanted++
+			}
 		}
 
-		sb.WriteString(fmt.Sprintf("🎬 <b>%s</b> (%s)\n", html.EscapeString(s.Show.Name), html.EscapeString(s.Show.Status)))
-		sb.WriteString(fmt.Sprintf("  └ <b>Episodes:</b> <code>%d/%d</code> downloaded\n\n", downloaded, monitored))
+		orderNum := i + 1
+		sb.WriteString(fmt.Sprintf("<b>#%d</b> 🎬 <b>%s</b> (%s)\n", orderNum, html.EscapeString(s.Show.Name), html.EscapeString(s.Show.Status)))
+		sb.WriteString(fmt.Sprintf("  └ <b>Episodes:</b> <code>%d/%d</code> downloaded • <code>%d</code> wanted\n\n", downloaded, monitored, wanted))
 
-		shortName := s.Show.Name
-		if len(shortName) > 16 {
-			shortName = shortName[:16]
-		}
 		rows = append(rows, []schema.InlineKeyboardButton{
-			{Text: fmt.Sprintf("🔍 Search %s", shortName), CallbackData: fmt.Sprintf("sw:%d", s.Show.ID)},
-			{Text: fmt.Sprintf("🔄 Sync %s", shortName), CallbackData: fmt.Sprintf("up:%d", s.Show.ID)},
+			{
+				Text:         fmt.Sprintf("🎬 #%d • %s (%d/%d)", orderNum, s.Show.Name, downloaded, monitored),
+				CallbackData: fmt.Sprintf("sh_ctl:%d:%d", s.Show.ID, page),
+			},
 		})
 	}
 
-	if len(shows) > limit {
-		sb.WriteString(fmt.Sprintf("<i>Showing %d of %d shows. Use <code>/shows &lt;name&gt;</code> to filter.</i>", limit, len(shows)))
+	if totalPages > 1 {
+		safeQuery := cleanQuery
+		if len(safeQuery) > 20 {
+			safeQuery = safeQuery[:20]
+		}
+		var navRow []schema.InlineKeyboardButton
+		if page > 0 {
+			navRow = append(navRow, schema.InlineKeyboardButton{
+				Text:         "← Prev",
+				CallbackData: fmt.Sprintf("sh_pg:%d:%s", page-1, safeQuery),
+			})
+		}
+		if page < totalPages-1 {
+			navRow = append(navRow, schema.InlineKeyboardButton{
+				Text:         "Next →",
+				CallbackData: fmt.Sprintf("sh_pg:%d:%s", page+1, safeQuery),
+			})
+		}
+		if len(navRow) > 0 {
+			rows = append(rows, navRow)
+		}
 	}
 
-	_ = client.SendMessageWithMarkup(token, chatID, strings.TrimSpace(sb.String()), &schema.InlineKeyboardMarkup{InlineKeyboard: rows})
+	sendOrEditBotMessage(
+		client,
+		token,
+		chatID,
+		strings.TrimSpace(sb.String()),
+		&schema.InlineKeyboardMarkup{InlineKeyboard: rows},
+		editMsgID...,
+	)
+}
+
+func sendShowControlCenter(client *TelegramService, token, chatID string, db *sqlx.DB, showID int64, returnPage int, editMsgID ...int64) {
+	showRepo := showRepository.NewShowRepository(db)
+	epRepo := episodeRepository.NewEpisodeRepository(db)
+	seasonRepo := seasonRepository.NewSeasonRepository(db)
+
+	show, err := showRepo.GetById(showID)
+	if err != nil {
+		sendOrEditBotMessage(client, token, chatID, "⚠️ <b>Show not found in library.</b>", nil, editMsgID...)
+		return
+	}
+
+	episodes, _ := epRepo.ListByShowID(showID)
+	seasons, _ := seasonRepo.ListByShowId(showID)
+
+	downloaded := 0
+	snatched := 0
+	wanted := 0
+	monitored := 0
+	for _, ep := range episodes {
+		switch ep.Tracking {
+		case episodeModel.TrackingDownloaded:
+			downloaded++
+			monitored++
+		case episodeModel.TrackingSnatched:
+			snatched++
+			monitored++
+		case episodeModel.TrackingWanted, episodeModel.TrackingMissing:
+			wanted++
+			monitored++
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("🎛️ <b>%s</b>\n", html.EscapeString(show.Name)))
+	sb.WriteString(fmt.Sprintf("  ├ <b>Status:</b> %s\n", html.EscapeString(show.Status)))
+	sb.WriteString(fmt.Sprintf("  ├ <b>Seasons:</b> <code>%d</code>\n", len(seasons)))
+	sb.WriteString(fmt.Sprintf("  ├ <b>Downloaded:</b> <code>%d / %d</code>\n", downloaded, monitored))
+	sb.WriteString(fmt.Sprintf("  └ <b>Queue:</b> <code>%d wanted</code> • <code>%d snatched</code>", wanted, snatched))
+
+	markup := &schema.InlineKeyboardMarkup{
+		InlineKeyboard: [][]schema.InlineKeyboardButton{
+			{
+				{Text: "🔍 Search Wanted Episodes", CallbackData: fmt.Sprintf("sw:%d", show.ID)},
+			},
+			{
+				{Text: "🔄 Sync with TVMaze", CallbackData: fmt.Sprintf("up:%d", show.ID)},
+			},
+			{
+				{Text: "🗑️ Delete Series", CallbackData: fmt.Sprintf("sh_del_ask:%d:%d", show.ID, returnPage)},
+			},
+			{
+				{Text: "← Back to Shows", CallbackData: fmt.Sprintf("sh_pg:%d:", returnPage)},
+			},
+		},
+	}
+
+	sendOrEditBotMessage(client, token, chatID, sb.String(), markup, editMsgID...)
 }
 
 func sendWantedEpisodes(client *TelegramService, token, chatID string, db *sqlx.DB) {
@@ -619,7 +736,110 @@ func handleBotCallback(
 
 	case data == "cmd:shows":
 		_ = client.AnswerCallbackQuery(token, cb.ID, "Loading library shows...")
-		sendShowsList(client, token, chatID, db, "")
+		sendShowsListPaginated(client, token, chatID, db, "", 0)
+
+	case strings.HasPrefix(data, "sh_pg:"):
+		rest := strings.TrimPrefix(data, "sh_pg:")
+		parts := strings.SplitN(rest, ":", 2)
+		page := 0
+		query := ""
+		if len(parts) >= 1 {
+			if p, err := strconv.Atoi(parts[0]); err == nil {
+				page = p
+			}
+		}
+		if len(parts) == 2 {
+			query = parts[1]
+		}
+		_ = client.AnswerCallbackQuery(token, cb.ID, fmt.Sprintf("Page %d", page+1))
+		var msgID int64
+		if cb.Message != nil {
+			msgID = cb.Message.MessageID
+		}
+		sendShowsListPaginated(client, token, chatID, db, query, page, msgID)
+
+	case strings.HasPrefix(data, "sh_ctl:"):
+		parts := strings.Split(strings.TrimPrefix(data, "sh_ctl:"), ":")
+		if len(parts) < 1 {
+			_ = client.AnswerCallbackQuery(token, cb.ID, "Invalid show")
+			return
+		}
+		showID, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil || showID <= 0 {
+			_ = client.AnswerCallbackQuery(token, cb.ID, "Invalid show ID")
+			return
+		}
+		returnPage := 0
+		if len(parts) >= 2 {
+			if p, err := strconv.Atoi(parts[1]); err == nil {
+				returnPage = p
+			}
+		}
+		_ = client.AnswerCallbackQuery(token, cb.ID, "🎛️ Show Control")
+		var msgID int64
+		if cb.Message != nil {
+			msgID = cb.Message.MessageID
+		}
+		sendShowControlCenter(client, token, chatID, db, showID, returnPage, msgID)
+
+	case strings.HasPrefix(data, "sh_del_ask:"):
+		parts := strings.Split(strings.TrimPrefix(data, "sh_del_ask:"), ":")
+		if len(parts) < 1 || cb.Message == nil {
+			_ = client.AnswerCallbackQuery(token, cb.ID, "Invalid show")
+			return
+		}
+		showID, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil || showID <= 0 {
+			_ = client.AnswerCallbackQuery(token, cb.ID, "Invalid show ID")
+			return
+		}
+		returnPage := 0
+		if len(parts) >= 2 {
+			if p, err := strconv.Atoi(parts[1]); err == nil {
+				returnPage = p
+			}
+		}
+		_ = client.AnswerCallbackQuery(token, cb.ID, "⚠️ Confirm series deletion?")
+		markup := &schema.InlineKeyboardMarkup{
+			InlineKeyboard: [][]schema.InlineKeyboardButton{
+				{
+					{Text: "⚠️ Confirm Delete Series", CallbackData: fmt.Sprintf("sh_del:%d:%d", showID, returnPage)},
+				},
+				{
+					{Text: "← Cancel", CallbackData: fmt.Sprintf("sh_ctl:%d:%d", showID, returnPage)},
+				},
+			},
+		}
+		_ = client.EditMessageReplyMarkup(token, chatID, cb.Message.MessageID, markup)
+
+	case strings.HasPrefix(data, "sh_del:"):
+		parts := strings.Split(strings.TrimPrefix(data, "sh_del:"), ":")
+		if len(parts) < 1 {
+			_ = client.AnswerCallbackQuery(token, cb.ID, "Invalid show")
+			return
+		}
+		showID, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil || showID <= 0 {
+			_ = client.AnswerCallbackQuery(token, cb.ID, "Invalid show ID")
+			return
+		}
+		returnPage := 0
+		if len(parts) >= 2 {
+			if p, err := strconv.Atoi(parts[1]); err == nil {
+				returnPage = p
+			}
+		}
+		showRepo := showRepository.NewShowRepository(db)
+		if err := showRepo.DeleteById(showID); err != nil {
+			_ = client.AnswerCallbackQuery(token, cb.ID, "⚠️ Failed to delete series")
+			return
+		}
+		_ = client.AnswerCallbackQuery(token, cb.ID, "🗑️ Series deleted")
+		var msgID int64
+		if cb.Message != nil {
+			msgID = cb.Message.MessageID
+		}
+		sendShowsListPaginated(client, token, chatID, db, "", returnPage, msgID)
 
 	case data == "cmd:wanted":
 		_ = client.AnswerCallbackQuery(token, cb.ID, "Loading wanted episodes...")
