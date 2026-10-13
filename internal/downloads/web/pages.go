@@ -3,13 +3,17 @@ package web
 import (
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/jusoaresg/gorgon/config"
 	"github.com/jusoaresg/gorgon/external/qbittorrent/schema"
 	qbittorrentService "github.com/jusoaresg/gorgon/external/qbittorrent/service"
+	blacklistModel "github.com/jusoaresg/gorgon/internal/blacklist/model"
+	blacklistRepository "github.com/jusoaresg/gorgon/internal/blacklist/repository"
 	"github.com/jusoaresg/gorgon/internal/downloads/service"
 	episodeEvents "github.com/jusoaresg/gorgon/internal/episode/events"
 	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
+	episodeService "github.com/jusoaresg/gorgon/internal/episode/service"
 	epContentModel "github.com/jusoaresg/gorgon/internal/episode_content/model"
 	epContentRepository "github.com/jusoaresg/gorgon/internal/episode_content/repository"
 	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
@@ -165,6 +169,72 @@ func (h *Handler) RemoveDownload(c echo.Context) error {
 
 	schemas.SendSuccess(c, "Remove Download", map[string]any{
 		"toastMessage": "Download removed",
+	})
+	return nil
+}
+
+func (h *Handler) BlacklistDownload(c echo.Context) error {
+	logger := config.GetLogger()
+
+	hash := c.FormValue("hash")
+	if hash == "" {
+		schemas.SendError(c, 400, "Missing torrent hash")
+		return nil
+	}
+
+	torrentService, err := qbittorrentService.NewQBittorrentService(logger)
+	if err != nil {
+		logger.Error("failed to create qbittorrent service for blacklisting download", slog.String("error", err.Error()))
+		schemas.SendError(c, 500, "Torrent client not available")
+		return nil
+	}
+
+	if err := torrentService.DeleteTorrent(hash, true); err != nil {
+		logger.Error("failed to delete torrent from client", slog.String("hash", hash), slog.String("error", err.Error()))
+		schemas.SendError(c, 500, "Failed to remove torrent")
+		return nil
+	}
+
+	episodeTorrent, err := h.EpisodeTorrentRepo.GetByHash(hash)
+	if err == nil && episodeTorrent.EpisodeId != 0 {
+		episode, epErr := h.EpisodeRepo.GetByID(episodeTorrent.EpisodeId)
+		if epErr == nil {
+			blRepo := blacklistRepository.NewBlacklistRepository(h.DB)
+			epIDCopy := episode.ID
+			_, _ = blRepo.Create(blacklistModel.ReleaseBlacklist{
+				ShowID:       episode.ShowID,
+				EpisodeID:    &epIDCopy,
+				InfoHash:     episodeTorrent.Hash,
+				ReleaseTitle: episodeTorrent.Title,
+				Indexer:      episodeTorrent.Indexer,
+				Reason:       "manual blacklist",
+				CreatedAt:    time.Now().Unix(),
+			})
+
+			_ = h.EpisodeTorrentRepo.DeleteByEpisodeID(episode.ID)
+
+			episode.Tracking = episodeModel.TrackingWanted
+			if err := h.EpisodeRepo.Update(episode); err == nil {
+				episodeEvents.EmitEpisodeTrackingUpdatedEvent(episode.ID, episode.Tracking, "")
+			}
+
+			showRepo := showRepository.NewShowRepository(h.DB)
+			searchSvc := episodeService.NewEpisodeSearchService(
+				h.DB,
+				logger,
+				&episodeService.EpisodeSearcher{},
+				episodeService.NewEpisodeDownloader(h.DB),
+				h.EpisodeRepo,
+				showRepo,
+			)
+			go func(epID int) {
+				_ = searchSvc.ProcessSingleEpisode(epID)
+			}(int(episode.ID))
+		}
+	}
+
+	schemas.SendSuccess(c, "Blacklist Download", map[string]any{
+		"toastMessage": "Release blacklisted — searching for another",
 	})
 	return nil
 }
