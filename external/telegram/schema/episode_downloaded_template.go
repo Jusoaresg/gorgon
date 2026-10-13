@@ -11,11 +11,15 @@ type EpisodeDownloadedTemplateInput struct {
 	Season       int
 	Episode      int
 	EpisodeTitle string
+	IsUpgrade    bool
+	Score        int
+	ReleaseTitle string
 }
 
 func FormatEpisodeDownloaded(input EpisodeDownloadedTemplateInput) string {
 	showName := html.EscapeString(input.ShowName)
 	epTitle := html.EscapeString(input.EpisodeTitle)
+	releaseTitle := html.EscapeString(input.ReleaseTitle)
 	epCode := fmt.Sprintf("S%02dE%02d", input.Season, input.Episode)
 
 	showDisplay := showName
@@ -23,9 +27,14 @@ func FormatEpisodeDownloaded(input EpisodeDownloadedTemplateInput) string {
 		showDisplay = fmt.Sprintf("<a href=\"%s\">%s</a>", html.EscapeString(input.ShowURL), showName)
 	}
 
-	header := fmt.Sprintf("✅ <b>Downloaded: %s</b>", showDisplay)
+	headerPrefix := "✅ <b>Downloaded:"
+	if input.IsUpgrade {
+		headerPrefix = "⬆️ <b>Upgraded:"
+	}
+
+	header := fmt.Sprintf("%s %s</b>", headerPrefix, showDisplay)
 	if showName == "" {
-		header = fmt.Sprintf("✅ <b>Downloaded: %s</b>", epCode)
+		header = fmt.Sprintf("%s %s</b>", headerPrefix, epCode)
 	}
 
 	type branch struct {
@@ -35,6 +44,12 @@ func FormatEpisodeDownloaded(input EpisodeDownloadedTemplateInput) string {
 
 	branches := []branch{
 		{label: "Episode", value: epCode},
+	}
+	if input.IsUpgrade && input.Score > 0 {
+		branches = append(branches, branch{label: "Score", value: fmt.Sprintf("<code>+%d</code>", input.Score)})
+	}
+	if input.IsUpgrade && releaseTitle != "" {
+		branches = append(branches, branch{label: "Release", value: fmt.Sprintf("<code>%s</code>", releaseTitle)})
 	}
 	if epTitle != "" {
 		branches = append(branches, branch{label: "Title", value: epTitle})

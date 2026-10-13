@@ -81,12 +81,61 @@ func (s *TelegramService) SendNotification(message string) error {
 	return s.SendMessage(s.ApiKey, s.ChatID, message)
 }
 
+func (s *TelegramService) AnswerCallbackQuery(token, callbackQueryID, text string) error {
+	if token == "" || callbackQueryID == "" {
+		return nil
+	}
+	_, err := s.ApiService.Post(fmt.Sprintf("bot%s/answerCallbackQuery", token), schema.AnswerCallbackQueryRequest{
+		CallbackQueryID: callbackQueryID,
+		Text:            text,
+	}, nil, nil)
+	return err
+}
+
 func (s *TelegramService) SendEpisodeSnatched(input schema.EpisodeSnatchedTemplateInput) error {
 	if s.ApiKey == "" || s.ChatID == "" {
 		return ErrTelegramNotConfigured
 	}
 
 	msg := schema.FormatEpisodeSnatched(input)
+
+	var rows [][]schema.InlineKeyboardButton
+	if input.ReleaseURL != "" && (strings.HasPrefix(input.ReleaseURL, "http://") || strings.HasPrefix(input.ReleaseURL, "https://")) {
+		rows = append(rows, []schema.InlineKeyboardButton{
+			{
+				Text: "🔗 View Release",
+				URL:  input.ReleaseURL,
+			},
+		})
+	}
+	if input.EpisodeID > 0 {
+		rows = append(rows, []schema.InlineKeyboardButton{
+			{
+				Text:         "🚫 Blacklist & Re-search",
+				CallbackData: fmt.Sprintf("bl_ep:%d", input.EpisodeID),
+			},
+		})
+	}
+
+	var markup *schema.InlineKeyboardMarkup
+	if len(rows) > 0 {
+		markup = &schema.InlineKeyboardMarkup{InlineKeyboard: rows}
+	}
+
+	return s.SendMessageWithMarkup(s.ApiKey, s.ChatID, msg, markup)
+}
+
+func (s *TelegramService) SendEpisodeDownloaded(input schema.EpisodeDownloadedTemplateInput) error {
+	msg := schema.FormatEpisodeDownloaded(input)
+	return s.SendNotification(msg)
+}
+
+func (s *TelegramService) SendReleaseBlacklisted(input schema.ReleaseBlacklistedTemplateInput) error {
+	if s.ApiKey == "" || s.ChatID == "" {
+		return ErrTelegramNotConfigured
+	}
+
+	msg := schema.FormatReleaseBlacklisted(input)
 
 	var markup *schema.InlineKeyboardMarkup
 	if input.ReleaseURL != "" && (strings.HasPrefix(input.ReleaseURL, "http://") || strings.HasPrefix(input.ReleaseURL, "https://")) {
@@ -103,11 +152,6 @@ func (s *TelegramService) SendEpisodeSnatched(input schema.EpisodeSnatchedTempla
 	}
 
 	return s.SendMessageWithMarkup(s.ApiKey, s.ChatID, msg, markup)
-}
-
-func (s *TelegramService) SendEpisodeDownloaded(input schema.EpisodeDownloadedTemplateInput) error {
-	msg := schema.FormatEpisodeDownloaded(input)
-	return s.SendNotification(msg)
 }
 
 func (s *TelegramService) SendDailySummary(input schema.DailySummaryTemplateInput) error {

@@ -15,6 +15,8 @@ type TelegramUpdateMessage struct {
 }
 
 type TelegramCallbackQuery struct {
+	ID      string                 `json:"id"`
+	Data    string                 `json:"data,omitempty"`
 	Message *TelegramUpdateMessage `json:"message,omitempty"`
 }
 

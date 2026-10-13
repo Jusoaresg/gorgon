@@ -5,8 +5,9 @@ type LinkPreviewOptions struct {
 }
 
 type InlineKeyboardButton struct {
-	Text string `json:"text"`
-	URL  string `json:"url,omitempty"`
+	Text         string `json:"text"`
+	URL          string `json:"url,omitempty"`
+	CallbackData string `json:"callback_data,omitempty"`
 }
 
 type InlineKeyboardMarkup struct {
@@ -19,4 +20,9 @@ type SendMessage struct {
 	ParseMode          string                `json:"parse_mode"`
 	LinkPreviewOptions *LinkPreviewOptions   `json:"link_preview_options,omitempty"`
 	ReplyMarkup        *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
+}
+
+type AnswerCallbackQueryRequest struct {
+	CallbackQueryID string `json:"callback_query_id"`
+	Text            string `json:"text,omitempty"`
 }

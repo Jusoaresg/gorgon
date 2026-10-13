@@ -52,3 +52,65 @@ func TestFormatEpisodeSnatched(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatEpisodeSnatched_Upgrade(t *testing.T) {
+	input := EpisodeSnatchedTemplateInput{
+		ShowName:       "Frieren",
+		Season:         1,
+		Episode:        5,
+		EpisodeTitle:   "Phantom of the Dead",
+		ReleaseTitle:   "[SubsPlease] Frieren - 05 (1080p).mkv",
+		OldReleaseName: "[Erai-raws] Frieren - 05 (720p).mkv",
+		ReleaseURL:     "https://nyaa.si/view/123",
+		Indexer:        "Nyaa",
+		Score:          70,
+		IsUpgrade:      true,
+		OldScore:       20,
+		CutoffScore:    60,
+	}
+
+	result := FormatEpisodeSnatched(input)
+
+	for _, want := range []string{
+		"⬆️ <b>Upgrade Snatched: Frieren</b>",
+		"├ Episode: S01E05",
+		"├ Score: <code>20 → 70</code>",
+		"├ Cutoff: <code>70 / 60</code> (Cutoff Reached 🎯)",
+		"├ Release: <code>[SubsPlease] Frieren - 05 (1080p).mkv</code>",
+		"├ Replaced: <code>[Erai-raws] Frieren - 05 (720p).mkv</code>",
+		"├ Indexer: <code>Nyaa</code>",
+		"└ Title: Phantom of the Dead",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("FormatEpisodeSnatched upgrade missing %q in result:\n%s", want, result)
+		}
+	}
+}
+
+func TestFormatReleaseBlacklisted(t *testing.T) {
+	input := ReleaseBlacklistedTemplateInput{
+		ShowName:     "Dandadan",
+		Season:       1,
+		Episode:      3,
+		EpisodeTitle: "Granny vs Granny",
+		ReleaseTitle: "[SubsPlease] Dandadan - 03 (1080p).mkv",
+		Indexer:      "Nyaa",
+		Reason:       "stalled download timeout (stalledDL)",
+	}
+
+	result := FormatReleaseBlacklisted(input)
+
+	for _, want := range []string{
+		"🚫 <b>Blacklisted: Dandadan</b>",
+		"├ Episode: S01E03",
+		"├ Release: <code>[SubsPlease] Dandadan - 03 (1080p).mkv</code>",
+		"├ Indexer: <code>Nyaa</code>",
+		"├ Reason: <code>stalled download timeout (stalledDL)</code>",
+		"└ Title: Granny vs Granny",
+		"🔄 <i>Searching for another release...</i>",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("FormatReleaseBlacklisted missing %q in result:\n%s", want, result)
+		}
+	}
+}
