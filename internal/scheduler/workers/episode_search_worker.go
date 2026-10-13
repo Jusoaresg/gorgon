@@ -31,7 +31,7 @@ func StartEpisodeSearchWorker(ctx context.Context, workerCount int, prowlarrServ
 		}()
 	}
 
-	ticker := time.NewTicker(time.Minute * 5)
+	ticker := time.NewTicker(15 * time.Minute)
 	defer func() {
 		ticker.Stop()
 		close(episodeChan)
@@ -44,16 +44,16 @@ func StartEpisodeSearchWorker(ctx context.Context, workerCount int, prowlarrServ
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			logger.Info("Checking for wanted episodes")
+			logger.Info("Checking for backfill wanted episodes")
 
 			episodes := fetchEpisodeSearchWantedEpisodes()
 			if len(episodes) == 0 {
-				logger.Info("No episodes found with status 'wanted' or 'missing'")
+				logger.Info("No wanted or missing episodes due for backfill search")
 				continue
 			}
 
 			for _, ep := range episodes {
-				logger.Info("Queuing episode for processing",
+				logger.Info("Queuing episode for backfill search",
 					slog.Int("episodeID", int(ep.ID)),
 					slog.Int64("showID", ep.ShowID),
 					slog.String("name", ep.Name),
@@ -68,15 +68,28 @@ func StartEpisodeSearchWorker(ctx context.Context, workerCount int, prowlarrServ
 	}
 }
 
+const (
+	backfillRecentThreshold = 48 * 3600 // 48 hours
+	backfillRecentCooldown  = 30 * 60   // 30 minutes cooldown for recent episodes
+	backfillOldCooldown     = 6 * 3600  // 6 hours cooldown for older backlog episodes
+	backfillBatchLimit      = 25        // max episodes searched per cycle
+)
+
 func fetchEpisodeSearchWantedEpisodes() []model.Episode {
 	logger := config.GetLogger().WithGroup("worker").With("name", "episodeSync")
 	db := config.GetSQLite()
 
 	episodeRepo := repository.NewEpisodeRepository(db)
 
-	episodes, err := episodeRepo.ListReleasedByTracking("wanted", "missing")
+	episodes, err := episodeRepo.ListBackfillCandidates(
+		time.Now().Unix(),
+		backfillRecentThreshold,
+		backfillRecentCooldown,
+		backfillOldCooldown,
+		backfillBatchLimit,
+	)
 	if err != nil {
-		logger.Error("Failed to list releases by tracking", slog.String("error", err.Error()))
+		logger.Error("Failed to list backfill candidates", slog.String("error", err.Error()))
 		return nil
 	}
 
