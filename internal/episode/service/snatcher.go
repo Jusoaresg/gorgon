@@ -19,7 +19,22 @@ import (
 
 var DbWriteMutex sync.Mutex
 
+type UpgradeInfo struct {
+	OldScore       int
+	NewScore       int
+	CutoffScore    int
+	OldReleaseName string
+}
+
 func SnatchEpisode(episode *model.Episode, response prowlarrSchema.SearchResponse, score ...int) error {
+	s := 0
+	if len(score) > 0 {
+		s = score[0]
+	}
+	return SnatchEpisodeWithUpgrade(episode, response, s, nil)
+}
+
+func SnatchEpisodeWithUpgrade(episode *model.Episode, response prowlarrSchema.SearchResponse, score int, upgrade *UpgradeInfo) error {
 	logger := config.GetLogger()
 	safeDB := config.GetSafeDB()
 
@@ -27,7 +42,7 @@ func SnatchEpisode(episode *model.Episode, response prowlarrSchema.SearchRespons
 	episodeTorrentRepo := episodeTorrentRepository.NewEpisodeTorrentRepository(safeDB.Db)
 
 	episode.Tracking = model.TrackingSnatched
-	episodeTorrent := episodeTorrentModel.FromSearchResponse(episode.ID, response, score...)
+	episodeTorrent := episodeTorrentModel.FromSearchResponse(episode.ID, response, score)
 
 	err := concurrency.WithWriteLock(safeDB.Write, func() error {
 		if _, err := episodeTorrentRepo.Upsert(episodeTorrent); err != nil {
@@ -57,7 +72,8 @@ func SnatchEpisode(episode *model.Episode, response prowlarrSchema.SearchRespons
 		if show, err := showRepo.GetById(episode.ShowID); err == nil {
 			showName = show.Name
 		}
-		if err := tgService.SendEpisodeSnatched(telegramSchema.EpisodeSnatchedTemplateInput{
+		input := telegramSchema.EpisodeSnatchedTemplateInput{
+			EpisodeID:    episode.ID,
 			ShowName:     showName,
 			Season:       episode.Season,
 			Episode:      episode.Number,
@@ -65,7 +81,15 @@ func SnatchEpisode(episode *model.Episode, response prowlarrSchema.SearchRespons
 			ReleaseTitle: response.Title,
 			ReleaseURL:   episodeTorrent.InfoUrl,
 			Indexer:      response.Indexer,
-		}); err != nil {
+			Score:        score,
+		}
+		if upgrade != nil {
+			input.IsUpgrade = true
+			input.OldScore = upgrade.OldScore
+			input.CutoffScore = upgrade.CutoffScore
+			input.OldReleaseName = upgrade.OldReleaseName
+		}
+		if err := tgService.SendEpisodeSnatched(input); err != nil {
 			logger.Error("failed to send telegram episode snatched notification", slog.String("error", err.Error()))
 		}
 	}()

@@ -187,7 +187,17 @@ func (s *EpisodeSearchService) ProcessEpisodeReleases(episode model.Episode, sho
 			slog.String("new_release", best.Title),
 		)
 
-		if err := s.Downloader.UpgradeEpisode(episode, best, score); err != nil {
+		cutoff := 0
+		if profile != nil {
+			cutoff = profile.UpgradeUntilScore
+		}
+		upgradeInfo := UpgradeInfo{
+			OldScore:       existingScore,
+			NewScore:       score,
+			CutoffScore:    cutoff,
+			OldReleaseName: existingTorrent.Title,
+		}
+		if err := s.Downloader.UpgradeEpisode(episode, best, score, upgradeInfo); err != nil {
 			if emitEvents {
 				s.emitSearchFinished(episode, show, SearchResultError, err.Error())
 			}

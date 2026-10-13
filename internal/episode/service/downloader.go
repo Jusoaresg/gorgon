@@ -13,7 +13,7 @@ import (
 type EpisodeDownloaderInterface interface {
 	DownloadEpisode(ep model.Episode, response schema.SearchResponse, score ...int) error
 	DownloadEpisodeTorrent(ep model.Episode, response schema.SearchResponse, score ...int) error
-	UpgradeEpisode(ep model.Episode, response schema.SearchResponse, newScore int) error
+	UpgradeEpisode(ep model.Episode, response schema.SearchResponse, newScore int, upgrade ...UpgradeInfo) error
 }
 
 type EpisodeDownloader struct {
@@ -64,7 +64,7 @@ func (d *EpisodeDownloader) DownloadEpisodeTorrent(ep model.Episode, response sc
 	return d.DownloadEpisode(ep, response, score...)
 }
 
-func (d *EpisodeDownloader) UpgradeEpisode(ep model.Episode, response schema.SearchResponse, newScore int) error {
+func (d *EpisodeDownloader) UpgradeEpisode(ep model.Episode, response schema.SearchResponse, newScore int, upgrade ...UpgradeInfo) error {
 	logger := config.GetLogger()
 
 	torrentService, err := qbittorrentService.NewQBittorrentService(logger)
@@ -83,8 +83,16 @@ func (d *EpisodeDownloader) UpgradeEpisode(ep model.Episode, response schema.Sea
 		slog.Int("new_score", newScore),
 	)
 
-	// Persist the snatch record with the upgraded score
-	if err := SnatchEpisode(&ep, response, newScore); err != nil {
+	var upgPtr *UpgradeInfo
+	if len(upgrade) > 0 {
+		u := upgrade[0]
+		upgPtr = &u
+	} else {
+		upgPtr = &UpgradeInfo{NewScore: newScore}
+	}
+
+	// Persist the snatch record with the upgraded score and upgrade metadata
+	if err := SnatchEpisodeWithUpgrade(&ep, response, newScore, upgPtr); err != nil {
 		_ = torrentService.DeleteTorrent(response.InfoHash, true)
 		return err
 	}

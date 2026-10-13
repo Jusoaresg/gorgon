@@ -6,6 +6,7 @@ import (
 	prowlarrSchema "github.com/jusoaresg/gorgon/external/prowlarr/schema"
 	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
 	episodeRepository "github.com/jusoaresg/gorgon/internal/episode/repository"
+	episodeService "github.com/jusoaresg/gorgon/internal/episode/service"
 	episodeTorrentModel "github.com/jusoaresg/gorgon/internal/episode_torrent/model"
 	episodeTorrentRepository "github.com/jusoaresg/gorgon/internal/episode_torrent/repository"
 	filterProfileModel "github.com/jusoaresg/gorgon/internal/filter_profile/model"
@@ -42,7 +43,7 @@ func (m *mockDownloader) DownloadEpisodeTorrent(ep episodeModel.Episode, respons
 	return m.DownloadEpisode(ep, response, score...)
 }
 
-func (m *mockDownloader) UpgradeEpisode(ep episodeModel.Episode, response prowlarrSchema.SearchResponse, newScore int) error {
+func (m *mockDownloader) UpgradeEpisode(ep episodeModel.Episode, response prowlarrSchema.SearchResponse, newScore int, upgrade ...episodeService.UpgradeInfo) error {
 	m.upgradeCalled = true
 	m.lastScore = newScore
 	m.lastTitle = response.Title
