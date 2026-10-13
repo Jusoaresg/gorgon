@@ -252,10 +252,6 @@ func handleBotCommand(
 		logger.Info("Received wanted command", slog.String("chatID", chatID))
 		sendWantedEpisodes(client, token, chatID, db)
 
-	case "/search":
-		logger.Info("Received search command", slog.String("chatID", chatID), slog.String("arg", arg))
-		handleSearchCommand(client, token, chatID, db, searchTrigger, arg)
-
 	case "/add":
 		logger.Info("Received add command", slog.String("chatID", chatID), slog.String("arg", arg))
 		handleAddShowCommand(client, token, chatID, db, logger, arg)
@@ -271,9 +267,8 @@ func sendRemoteMenu(client *TelegramService, token, chatID string) {
 		"Control your media server from anywhere:\n" +
 		"• <code>/summary</code> — Today's scheduled releases\n" +
 		"• <code>/downloads</code> — Active transfers & torrent controls\n" +
-		"• <code>/shows</code> — Library series & quick actions\n" +
+		"• <code>/shows</code> — Library series & control center\n" +
 		"• <code>/wanted</code> — Released missing/wanted episodes\n" +
-		"• <code>/search &lt;show&gt;</code> — Trigger wanted search for a show\n" +
 		"• <code>/add &lt;name&gt;</code> — Search TVMaze & add a new series\n" +
 		"• <code>/ping</code> — Check bot connection"
 
@@ -711,33 +706,14 @@ func sendWantedEpisodeControlCenter(client *TelegramService, token, chatID strin
 	sendOrEditBotMessage(client, token, chatID, sb.String(), markup, editMsgID...)
 }
 
-func handleSearchCommand(
-	client *TelegramService,
-	token, chatID string,
-	db *sqlx.DB,
-	searchTrigger EpisodeSearchTrigger,
-	query string,
-) {
-	if strings.TrimSpace(query) == "" {
-		sendWantedEpisodes(client, token, chatID, db)
-		return
-	}
+const addShowsPageSize = 5
 
-	showRepo := showRepository.NewShowRepository(db)
-	shows, err := showRepo.ListFiltered(strings.TrimSpace(query), "")
-	if err != nil || len(shows) == 0 {
-		_ = client.SendMessage(token, chatID, fmt.Sprintf("🔍 No show in your library matched <code>%s</code>.", html.EscapeString(query)))
-		return
+func sanitizeCallbackQuery(query string) string {
+	clean := strings.ReplaceAll(strings.TrimSpace(query), ":", " ")
+	if len(clean) > 22 {
+		clean = clean[:22]
 	}
-
-	if len(shows) == 1 && searchTrigger != nil {
-		s := shows[0]
-		searchTrigger.ProcessShowWantedEpisodes(int(s.ID))
-		_ = client.SendMessage(token, chatID, fmt.Sprintf("🔍 <b>Search started</b> for all wanted episodes of <b>%s</b>.", html.EscapeString(s.Name)))
-		return
-	}
-
-	sendShowsList(client, token, chatID, db, query)
+	return clean
 }
 
 func handleAddShowCommand(
@@ -752,62 +728,206 @@ func handleAddShowCommand(
 		_ = client.SendMessage(token, chatID, "➕ <b>Add Show</b>\n\nUsage: <code>/add &lt;series name&gt;</code>\nExample: <code>/add Dandadan</code>")
 		return
 	}
+	sendAddShowResultsPaginated(client, token, chatID, db, logger, query, 0)
+}
+
+func sendAddShowResultsPaginated(
+	client *TelegramService,
+	token, chatID string,
+	db *sqlx.DB,
+	logger *slog.Logger,
+	query string,
+	page int,
+	editMsgID ...int64,
+) {
+	cleanQuery := strings.TrimSpace(query)
+	if cleanQuery == "" {
+		sendOrEditBotMessage(client, token, chatID, "➕ <b>Add Show</b>\n\nUsage: <code>/add &lt;series name&gt;</code>", nil, editMsgID...)
+		return
+	}
 
 	tvMazeSvc := tvMazeService.NewTvMazeSearchService(logger)
 	showRepo := showRepository.NewShowRepository(db)
 	mgr := tvMazeService.NewShowManager(*tvMazeSvc, *showRepo, logger)
 
-	results, err := mgr.SearchAndEnrich(query)
+	results, err := mgr.SearchAndEnrich(cleanQuery)
 	if err != nil || results == nil || len(*results) == 0 {
-		_ = client.SendMessage(token, chatID, fmt.Sprintf("🔍 No results found on TVMaze for <code>%s</code>.", html.EscapeString(query)))
+		sendOrEditBotMessage(
+			client,
+			token,
+			chatID,
+			fmt.Sprintf("🔍 No results found on TVMaze for <code>%s</code>.", html.EscapeString(cleanQuery)),
+			nil,
+			editMsgID...,
+		)
 		return
 	}
 
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("🔎 <b>TVMaze Results for \"%s\"</b>\n\n", html.EscapeString(query)))
-
-	var rows [][]schema.InlineKeyboardButton
 	list := *results
-	limit := len(list)
-	if limit > 5 {
-		limit = 5
+	totalResults := len(list)
+	totalPages := (totalResults + addShowsPageSize - 1) / addShowsPageSize
+	if page < 0 {
+		page = 0
+	}
+	if page >= totalPages {
+		page = totalPages - 1
 	}
 
-	for i := 0; i < limit; i++ {
+	start := page * addShowsPageSize
+	end := start + addShowsPageSize
+	if end > totalResults {
+		end = totalResults
+	}
+
+	var sb strings.Builder
+	if totalPages > 1 {
+		sb.WriteString(fmt.Sprintf("🔎 <b>TVMaze Results for \"%s\" (%d)</b> • <i>Page %d/%d</i>\n\n", html.EscapeString(cleanQuery), totalResults, page+1, totalPages))
+	} else {
+		sb.WriteString(fmt.Sprintf("🔎 <b>TVMaze Results for \"%s\" (%d)</b>\n\n", html.EscapeString(cleanQuery), totalResults))
+	}
+
+	var rows [][]schema.InlineKeyboardButton
+	safeQuery := sanitizeCallbackQuery(cleanQuery)
+
+	for i := start; i < end; i++ {
 		r := list[i]
-		year := ""
+		orderNum := i + 1
+		year := "TBA"
 		if len(r.Show.Premiered) >= 4 {
 			year = r.Show.Premiered[:4]
 		}
 		statusBadge := r.Show.Status
+		if statusBadge == "" {
+			statusBadge = "Unknown"
+		}
 		if r.IsAdded {
 			statusBadge += " • ✅ In Library"
 		}
-		sb.WriteString(fmt.Sprintf("🎬 <b>%s</b> (%s) — <i>%s</i>\n", html.EscapeString(r.Show.Name), year, html.EscapeString(statusBadge)))
 
-		if !r.IsAdded {
-			shortName := r.Show.Name
-			if len(shortName) > 15 {
-				shortName = shortName[:15]
-			}
-			rows = append(rows, []schema.InlineKeyboardButton{
-				{
-					Text:         fmt.Sprintf("➕ %s (Future)", shortName),
-					CallbackData: fmt.Sprintf("add:%d:future", r.Show.TvMazeID),
-				},
-				{
-					Text:         fmt.Sprintf("➕ %s (All)", shortName),
-					CallbackData: fmt.Sprintf("add:%d:all", r.Show.TvMazeID),
-				},
+		sb.WriteString(fmt.Sprintf("<b>#%d</b> 🎬 <b>%s</b> (%s)\n", orderNum, html.EscapeString(r.Show.Name), html.EscapeString(year)))
+		sb.WriteString(fmt.Sprintf("  └ <b>Status:</b> %s\n\n", html.EscapeString(statusBadge)))
+
+		btnIcon := "➕"
+		if r.IsAdded {
+			btnIcon = "✅"
+		}
+		rows = append(rows, []schema.InlineKeyboardButton{
+			{
+				Text:         fmt.Sprintf("%s #%d • %s • %s", btnIcon, orderNum, year, r.Show.Name),
+				CallbackData: fmt.Sprintf("ad_ctl:%d:%d:%s", r.Show.TvMazeID, page, safeQuery),
+			},
+		})
+	}
+
+	if totalPages > 1 {
+		var navRow []schema.InlineKeyboardButton
+		if page > 0 {
+			navRow = append(navRow, schema.InlineKeyboardButton{
+				Text:         "← Prev",
+				CallbackData: fmt.Sprintf("ad_pg:%d:%s", page-1, safeQuery),
 			})
+		}
+		if page < totalPages-1 {
+			navRow = append(navRow, schema.InlineKeyboardButton{
+				Text:         "Next →",
+				CallbackData: fmt.Sprintf("ad_pg:%d:%s", page+1, safeQuery),
+			})
+		}
+		if len(navRow) > 0 {
+			rows = append(rows, navRow)
 		}
 	}
 
-	var markup *schema.InlineKeyboardMarkup
-	if len(rows) > 0 {
-		markup = &schema.InlineKeyboardMarkup{InlineKeyboard: rows}
+	sendOrEditBotMessage(
+		client,
+		token,
+		chatID,
+		strings.TrimSpace(sb.String()),
+		&schema.InlineKeyboardMarkup{InlineKeyboard: rows},
+		editMsgID...,
+	)
+}
+
+func sendAddShowControlCenter(
+	client *TelegramService,
+	token, chatID string,
+	db *sqlx.DB,
+	logger *slog.Logger,
+	tvMazeID int64,
+	returnPage int,
+	returnQuery string,
+	editMsgID ...int64,
+) {
+	tvMazeSvc := tvMazeService.NewTvMazeSearchService(logger)
+	showDto, err := tvMazeSvc.SearchByTvMazeId(tvMazeID)
+	if err != nil || showDto == nil {
+		sendOrEditBotMessage(client, token, chatID, "⚠️ <b>Failed to load show details from TVMaze.</b>", nil, editMsgID...)
+		return
 	}
-	_ = client.SendMessageWithMarkup(token, chatID, strings.TrimSpace(sb.String()), markup)
+
+	showRepo := showRepository.NewShowRepository(db)
+	existing, _ := showRepo.GetByTvMazeID(tvMazeID)
+
+	year := "TBA"
+	if len(showDto.Premiered) >= 4 {
+		year = showDto.Premiered[:4]
+	}
+	status := showDto.Status
+	if status == "" {
+		status = "Unknown"
+	}
+	lang := showDto.Language
+	if lang == "" {
+		lang = "N/A"
+	}
+	genres := "N/A"
+	if len(showDto.Genres) > 0 {
+		genres = strings.Join(showDto.Genres, ", ")
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("🎬 <b>%s</b> (%s)\n", html.EscapeString(showDto.Name), html.EscapeString(year)))
+	sb.WriteString(fmt.Sprintf("  ├ <b>Status:</b> %s\n", html.EscapeString(status)))
+	sb.WriteString(fmt.Sprintf("  ├ <b>Type:</b> %s • %s\n", html.EscapeString(showDto.Type), html.EscapeString(lang)))
+	sb.WriteString(fmt.Sprintf("  └ <b>Genres:</b> %s", html.EscapeString(genres)))
+
+	safeQuery := sanitizeCallbackQuery(returnQuery)
+	var rows [][]schema.InlineKeyboardButton
+
+	if existing.ID > 0 {
+		sb.WriteString("\n\n✅ <i>Already in your library.</i>")
+		rows = append(rows, []schema.InlineKeyboardButton{
+			{Text: "🎛️ Open Show Control", CallbackData: fmt.Sprintf("sh_ctl:%d:0", existing.ID)},
+		})
+	} else {
+		sb.WriteString("\n\n<i>Select how you want to monitor episodes:</i>")
+		rows = append(rows,
+			[]schema.InlineKeyboardButton{
+				{Text: "➕ Add • Future Episodes", CallbackData: fmt.Sprintf("add:%d:future", showDto.TvMazeID)},
+			},
+			[]schema.InlineKeyboardButton{
+				{Text: "➕ Add • All Episodes", CallbackData: fmt.Sprintf("add:%d:all", showDto.TvMazeID)},
+			},
+			[]schema.InlineKeyboardButton{
+				{Text: "➕ Add • None (Unmonitored)", CallbackData: fmt.Sprintf("add:%d:none", showDto.TvMazeID)},
+			},
+		)
+	}
+
+	if safeQuery != "" {
+		rows = append(rows, []schema.InlineKeyboardButton{
+			{Text: "← Back to Results", CallbackData: fmt.Sprintf("ad_pg:%d:%s", returnPage, safeQuery)},
+		})
+	}
+
+	sendOrEditBotMessage(
+		client,
+		token,
+		chatID,
+		sb.String(),
+		&schema.InlineKeyboardMarkup{InlineKeyboard: rows},
+		editMsgID...,
+	)
 }
 
 func handleBotCallback(
@@ -1258,6 +1378,55 @@ func handleBotCallback(
 		}
 		blacklistEpisodeFromBot(client, token, chatID, db, epTorr.EpisodeId, searchTrigger, logger)
 
+	case strings.HasPrefix(data, "ad_pg:"):
+		rest := strings.TrimPrefix(data, "ad_pg:")
+		parts := strings.SplitN(rest, ":", 2)
+		page := 0
+		query := ""
+		if len(parts) >= 1 {
+			if p, err := strconv.Atoi(parts[0]); err == nil {
+				page = p
+			}
+		}
+		if len(parts) == 2 {
+			query = parts[1]
+		}
+		_ = client.AnswerCallbackQuery(token, cb.ID, fmt.Sprintf("Page %d", page+1))
+		var msgID int64
+		if cb.Message != nil {
+			msgID = cb.Message.MessageID
+		}
+		sendAddShowResultsPaginated(client, token, chatID, db, logger, query, page, msgID)
+
+	case strings.HasPrefix(data, "ad_ctl:"):
+		rest := strings.TrimPrefix(data, "ad_ctl:")
+		parts := strings.SplitN(rest, ":", 3)
+		if len(parts) < 1 {
+			_ = client.AnswerCallbackQuery(token, cb.ID, "Invalid TVMaze show")
+			return
+		}
+		tvMazeID, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil || tvMazeID <= 0 {
+			_ = client.AnswerCallbackQuery(token, cb.ID, "Invalid TVMaze ID")
+			return
+		}
+		returnPage := 0
+		if len(parts) >= 2 {
+			if p, err := strconv.Atoi(parts[1]); err == nil {
+				returnPage = p
+			}
+		}
+		returnQuery := ""
+		if len(parts) == 3 {
+			returnQuery = parts[2]
+		}
+		_ = client.AnswerCallbackQuery(token, cb.ID, "🎬 Show Details")
+		var msgID int64
+		if cb.Message != nil {
+			msgID = cb.Message.MessageID
+		}
+		sendAddShowControlCenter(client, token, chatID, db, logger, tvMazeID, returnPage, returnQuery, msgID)
+
 	case strings.HasPrefix(data, "add:"):
 		parts := strings.Split(strings.TrimPrefix(data, "add:"), ":")
 		if len(parts) != 2 {
@@ -1271,7 +1440,11 @@ func handleBotCallback(
 		}
 		trackingType := parts[1]
 		_ = client.AnswerCallbackQuery(token, cb.ID, "➕ Adding series...")
-		go addShowFromBot(client, token, chatID, db, tvMazeID, trackingType, searchTrigger, logger)
+		var msgID int64
+		if cb.Message != nil {
+			msgID = cb.Message.MessageID
+		}
+		go addShowFromBot(client, token, chatID, db, tvMazeID, trackingType, searchTrigger, logger, msgID)
 	}
 }
 
@@ -1408,6 +1581,7 @@ func addShowFromBot(
 	trackingType string,
 	searchTrigger EpisodeSearchTrigger,
 	logger *slog.Logger,
+	editMsgID ...int64,
 ) {
 	if trackingType != "all" && trackingType != "future" && trackingType != "none" {
 		trackingType = "future"
@@ -1415,7 +1589,12 @@ func addShowFromBot(
 
 	showRepo := showRepository.NewShowRepository(db)
 	if existing, err := showRepo.GetByTvMazeID(tvMazeID); err == nil && existing.ID > 0 {
-		_ = client.SendMessage(token, chatID, fmt.Sprintf("ℹ️ <b>%s</b> is already in your library.", html.EscapeString(existing.Name)))
+		markup := &schema.InlineKeyboardMarkup{
+			InlineKeyboard: [][]schema.InlineKeyboardButton{
+				{{Text: "🎛️ Open Show Control", CallbackData: fmt.Sprintf("sh_ctl:%d:0", existing.ID)}},
+			},
+		}
+		sendOrEditBotMessage(client, token, chatID, fmt.Sprintf("ℹ️ <b>%s</b> is already in your library.", html.EscapeString(existing.Name)), markup, editMsgID...)
 		return
 	}
 
@@ -1507,7 +1686,12 @@ func addShowFromBot(
 		html.EscapeString(showSettings.ShowType),
 		html.EscapeString(trackingType),
 	)
-	_ = client.SendMessage(token, chatID, msg)
+	markup := &schema.InlineKeyboardMarkup{
+		InlineKeyboard: [][]schema.InlineKeyboardButton{
+			{{Text: "🎛️ Open Show Control", CallbackData: fmt.Sprintf("sh_ctl:%d:0", showID)}},
+		},
+	}
+	sendOrEditBotMessage(client, token, chatID, msg, markup, editMsgID...)
 
 	if trackingType == "all" && searchTrigger != nil {
 		searchTrigger.ProcessShowWantedEpisodes(int(showID))
