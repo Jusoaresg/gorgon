@@ -8,8 +8,11 @@ import (
 	"math/rand"
 	"testing"
 
+	"time"
+
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func MakeEpisodeWithDeps(db *sqlx.DB) (model.Episode, error) {
@@ -236,4 +239,85 @@ func TestEpisodeRepository_ListByFilters(t *testing.T) {
 	allByID, err := episodeRepo.GetAllByID(id)
 	assert.NoError(t, err)
 	assert.Len(t, allByID, 1)
+}
+
+func TestEpisodeRepository_UpdateLastSearchedAt(t *testing.T) {
+	episodeRepo, db := getEpRepo()
+
+	episode, err := MakeEpisodeWithDeps(db)
+	require.NoError(t, err)
+	id, err := episodeRepo.Create(episode)
+	require.NoError(t, err)
+
+	now := time.Now().Unix()
+	err = episodeRepo.UpdateLastSearchedAt(id, now)
+	require.NoError(t, err)
+
+	updated, err := episodeRepo.GetByID(id)
+	require.NoError(t, err)
+	assert.Equal(t, now, updated.LastSearchedAt)
+}
+
+func TestEpisodeRepository_ListBackfillCandidates_TieredCooldown(t *testing.T) {
+	episodeRepo, db := getEpRepo()
+
+	baseEp, err := MakeEpisodeWithDeps(db)
+	require.NoError(t, err)
+
+	now := int64(1_700_000_000)
+	recentThreshold := int64(48 * 3600) // 48h
+	recentCooldown := int64(30 * 60)    // 30m
+	oldCooldown := int64(6 * 3600)      // 6h
+
+	createEp := func(name string, number int, airstamp int64, tracking string, lastSearched int64) int64 {
+		ep := baseEp
+		ep.Name = name
+		ep.Season = 1
+		ep.Number = number
+		ep.AirStamp = airstamp
+		ep.Tracking = tracking
+		id, err := episodeRepo.Create(ep)
+		require.NoError(t, err)
+		if lastSearched > 0 {
+			require.NoError(t, episodeRepo.UpdateLastSearchedAt(id, lastSearched))
+		}
+		return id
+	}
+
+	// 1. Recent episode (aired 2h ago), never searched -> Eligible
+	epRecentUnsearched := createEp("Recent Unsearched", 1, now-(2*3600), model.TrackingWanted, 0)
+
+	// 2. Recent episode (aired 3h ago), searched 10m ago (< 30m cooldown) -> Excluded
+	_ = createEp("Recent On Cooldown", 2, now-(3*3600), model.TrackingWanted, now-(10*60))
+
+	// 3. Recent episode (aired 4h ago), searched 45m ago (> 30m cooldown) -> Eligible
+	epRecentCooldownExpired := createEp("Recent Cooldown Expired", 3, now-(4*3600), model.TrackingMissing, now-(45*60))
+
+	// 4. Old backlog episode (aired 10d ago), searched 2h ago (< 6h cooldown) -> Excluded
+	_ = createEp("Old On Cooldown", 4, now-(10*24*3600), model.TrackingWanted, now-(2*3600))
+
+	// 5. Old backlog episode (aired 10d ago), searched 7h ago (> 6h cooldown) -> Eligible
+	epOldCooldownExpired := createEp("Old Cooldown Expired", 5, now-(10*24*3600), model.TrackingWanted, now-(7*3600))
+
+	// 6. Future unaired episode (airs in 2h) -> Excluded
+	_ = createEp("Future Episode", 6, now+(2*3600), model.TrackingWanted, 0)
+
+	// 7. Downloaded episode -> Excluded
+	_ = createEp("Downloaded Episode", 7, now-(1*3600), model.TrackingDownloaded, 0)
+
+	candidates, err := episodeRepo.ListBackfillCandidates(now, recentThreshold, recentCooldown, oldCooldown, 10)
+	require.NoError(t, err)
+	require.Len(t, candidates, 3)
+
+	// Should be ordered by airstamp DESC (newest first)
+	assert.Equal(t, epRecentUnsearched, candidates[0].ID)
+	assert.Equal(t, epRecentCooldownExpired, candidates[1].ID)
+	assert.Equal(t, epOldCooldownExpired, candidates[2].ID)
+
+	// Verify batch limit is respected
+	limited, err := episodeRepo.ListBackfillCandidates(now, recentThreshold, recentCooldown, oldCooldown, 2)
+	require.NoError(t, err)
+	require.Len(t, limited, 2)
+	assert.Equal(t, epRecentUnsearched, limited[0].ID)
+	assert.Equal(t, epRecentCooldownExpired, limited[1].ID)
 }
