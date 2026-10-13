@@ -121,7 +121,6 @@ type ReleaseBlacklistedTemplateInput struct {
 func FormatReleaseBlacklisted(input ReleaseBlacklistedTemplateInput) string {
 	showName := html.EscapeString(input.ShowName)
 	epTitle := html.EscapeString(input.EpisodeTitle)
-	releaseTitle := html.EscapeString(input.ReleaseTitle)
 	indexer := html.EscapeString(input.Indexer)
 	reason := html.EscapeString(input.Reason)
 	epCode := fmt.Sprintf("S%02dE%02d", input.Season, input.Episode)
@@ -139,9 +138,6 @@ func FormatReleaseBlacklisted(input ReleaseBlacklistedTemplateInput) string {
 	var branches []branch
 	if input.Season > 0 || input.Episode > 0 {
 		branches = append(branches, branch{label: "Episode", value: epCode})
-	}
-	if releaseTitle != "" {
-		branches = append(branches, branch{label: "Release", value: fmt.Sprintf("<code>%s</code>", releaseTitle)})
 	}
 	if indexer != "" {
 		branches = append(branches, branch{label: "Indexer", value: fmt.Sprintf("<code>%s</code>", indexer)})

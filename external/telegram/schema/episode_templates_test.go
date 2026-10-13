@@ -103,7 +103,6 @@ func TestFormatReleaseBlacklisted(t *testing.T) {
 	for _, want := range []string{
 		"🚫 <b>Blacklisted: Dandadan</b>",
 		"├ Episode: S01E03",
-		"├ Release: <code>[SubsPlease] Dandadan - 03 (1080p).mkv</code>",
 		"├ Indexer: <code>Nyaa</code>",
 		"├ Reason: <code>stalled download timeout (stalledDL)</code>",
 		"└ Title: Granny vs Granny",

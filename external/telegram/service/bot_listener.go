@@ -950,7 +950,20 @@ func blacklistEpisodeFromBot(
 		Indexer:      epTorr.Indexer,
 		Reason:       "telegram remote blacklist",
 	})
-	_ = client.SendMessage(token, chatID, msg)
+	var markup *schema.InlineKeyboardMarkup
+	if epTorr.InfoUrl != "" && (strings.HasPrefix(epTorr.InfoUrl, "http://") || strings.HasPrefix(epTorr.InfoUrl, "https://")) {
+		markup = &schema.InlineKeyboardMarkup{
+			InlineKeyboard: [][]schema.InlineKeyboardButton{
+				{
+					{
+						Text: "🔗 View Release",
+						URL:  epTorr.InfoUrl,
+					},
+				},
+			},
+		}
+	}
+	_ = client.SendMessageWithMarkup(token, chatID, msg, markup)
 
 	if searchTrigger != nil {
 		go func(id int) {
