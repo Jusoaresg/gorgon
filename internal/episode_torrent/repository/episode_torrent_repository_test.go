@@ -138,3 +138,29 @@ func TestEpisodeTorrentRepository_DeleteByEpisodeIDs(t *testing.T) {
 	_, err = repo.GetByEpisodeID(t2.EpisodeId)
 	assert.Error(t, err)
 }
+
+func TestEpisodeTorrentRepository_UpdateStallState(t *testing.T) {
+	db, repo := getEpTorrentRepo()
+
+	torrent := MakeEpisodeTorrentWithDeps(db)
+	_, err := repo.Upsert(torrent)
+	assert.NoError(t, err)
+
+	err = repo.UpdateStallState(torrent.EpisodeId, 1754000500, 52428800)
+	assert.NoError(t, err)
+
+	result, err := repo.GetByEpisodeID(torrent.EpisodeId)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1754000500), result.StalledSince)
+	assert.Equal(t, int64(52428800), result.LastAmountLeft)
+
+	// Re-upserting a new torrent for the episode must reset stall state
+	torrent.Hash = "freshhash999"
+	_, err = repo.Upsert(torrent)
+	assert.NoError(t, err)
+
+	resetResult, err := repo.GetByEpisodeID(torrent.EpisodeId)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), resetResult.StalledSince)
+	assert.Equal(t, int64(-1), resetResult.LastAmountLeft)
+}

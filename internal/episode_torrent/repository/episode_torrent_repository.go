@@ -47,7 +47,9 @@ func (s *EpisodeTorrentRepository) Upsert(t model.EpisodeTorrent) (int64, error)
 		info_url = :info_url,
 		publish_date = :publish_date,
 		score = :score,
-		created_at = :created_at
+		created_at = :created_at,
+		stalled_since = 0,
+		last_amount_left = -1
 	`
 	result, err := s.db.NamedExec(query, t)
 	if err != nil {
@@ -99,7 +101,9 @@ func (s *EpisodeTorrentRepository) UpsertTx(tx *sqlx.Tx, t model.EpisodeTorrent)
 		info_url = :info_url,
 		publish_date = :publish_date,
 		score = :score,
-		created_at = :created_at
+		created_at = :created_at,
+		stalled_since = 0,
+		last_amount_left = -1
 	`
 	result, err := tx.NamedExec(query, t)
 	if err != nil {
@@ -158,6 +162,16 @@ func (s *EpisodeTorrentRepository) ListByEpisodeIDs(episodeIDs []int64) ([]model
 	return torrents, nil
 }
 
+func (s *EpisodeTorrentRepository) UpdateStallState(episodeID int64, stalledSince, lastAmountLeft int64) error {
+	_, err := s.db.Exec(
+		"UPDATE episode_torrents SET stalled_since = ?, last_amount_left = ? WHERE episode_id = ?",
+		stalledSince,
+		lastAmountLeft,
+		episodeID,
+	)
+	return err
+}
+
 func (s *EpisodeTorrentRepository) DeleteByEpisodeID(episodeID int64) error {
 	if _, err := s.db.Exec("DELETE FROM episode_torrents WHERE episode_id = ?", episodeID); err != nil {
 		return err
@@ -191,6 +205,7 @@ var _ EpisodeTorrentRepositoryInterface = (*EpisodeTorrentRepository)(nil)
 type EpisodeTorrentRepositoryInterface interface {
 	Upsert(t model.EpisodeTorrent) (int64, error)
 	UpsertTx(tx *sqlx.Tx, t model.EpisodeTorrent) (int64, error)
+	UpdateStallState(episodeID int64, stalledSince, lastAmountLeft int64) error
 	GetByEpisodeID(episodeID int64) (model.EpisodeTorrent, error)
 	GetByHash(hash string) (model.EpisodeTorrent, error)
 	ListByEpisodeIDs(episodeIDs []int64) ([]model.EpisodeTorrent, error)
