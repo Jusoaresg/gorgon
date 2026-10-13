@@ -3,12 +3,45 @@ package service
 import (
 	"log/slog"
 	"sort"
+	"strings"
 
 	"github.com/jusoaresg/gorgon/config"
 	"github.com/jusoaresg/gorgon/external/prowlarr/schema"
 	"github.com/jusoaresg/gorgon/internal/episode/model"
 	"github.com/jusoaresg/gorgon/internal/filter"
+	"github.com/jusoaresg/gorgon/utils"
 )
+
+var tokenBracketReplacer = strings.NewReplacer("[", " ", "]", " ", "(", " ", ")", " ")
+
+func normalizeForTokenMatch(s string) string {
+	norm := utils.NormalizeTitle(s)
+	return strings.Join(strings.Fields(tokenBracketReplacer.Replace(norm)), " ")
+}
+
+// MatchShowTitle checks whether the release name contains the canonical show title or any configured alias on word boundaries.
+func MatchShowTitle(release string, ctx filter.Context) bool {
+	names := ctx.AllNames()
+	if len(names) == 0 {
+		return true
+	}
+
+	paddedRelease := " " + normalizeForTokenMatch(release) + " "
+	if strings.TrimSpace(paddedRelease) == "" {
+		return false
+	}
+
+	for _, candidate := range names {
+		normCandidate := normalizeForTokenMatch(candidate)
+		if normCandidate == "" {
+			continue
+		}
+		if strings.Contains(paddedRelease, " "+normCandidate+" ") {
+			return true
+		}
+	}
+	return false
+}
 
 type ScoredResponse struct {
 	Response schema.SearchResponse
@@ -32,9 +65,9 @@ func FilterAndScoreResponses(responses []schema.SearchResponse, profile *filter.
 	var scored []ScoredResponse
 	for _, response := range responses {
 		name := releaseName(response)
-		if !filter.MatchEpisode(name, ctx.Season, ctx.Episode, ctx.ShowType) {
+		if !MatchShowTitle(name, ctx) || !filter.MatchEpisode(name, ctx.Season, ctx.Episode, ctx.ShowType) {
 			logger.Debug(
-				"Release rejected by episode mismatch",
+				"Release rejected by show or episode mismatch",
 				slog.String("filename", name),
 				slog.Int("season", ctx.Season),
 				slog.Int("episode", ctx.Episode),
@@ -79,7 +112,7 @@ func IsGoodResponse(response schema.SearchResponse, profile *filter.Profile, ctx
 	const goodScore = 60
 	name := releaseName(response)
 
-	if !filter.MatchEpisode(name, ctx.Season, ctx.Episode, ctx.ShowType) {
+	if !MatchShowTitle(name, ctx) || !filter.MatchEpisode(name, ctx.Season, ctx.Episode, ctx.ShowType) {
 		return false
 	}
 
@@ -94,7 +127,7 @@ func IsGoodResponse(response schema.SearchResponse, profile *filter.Profile, ctx
 // EvaluateResponse computes episode matching, filter profile compliance, release metadata, and canonical score for a single release.
 func EvaluateResponse(response schema.SearchResponse, profile *filter.Profile, ctx filter.Context) EvaluatedResult {
 	name := releaseName(response)
-	epMatch := filter.MatchEpisode(name, ctx.Season, ctx.Episode, ctx.ShowType)
+	epMatch := MatchShowTitle(name, ctx) && filter.MatchEpisode(name, ctx.Season, ctx.Episode, ctx.ShowType)
 	eval := filter.Evaluate(profile, ctx, name)
 	score := CalculateScore(response, profile, ctx)
 	meta := filter.ParseReleaseMetadata(name)
