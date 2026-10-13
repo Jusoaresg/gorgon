@@ -690,7 +690,7 @@ func handleBotCallback(
 					{Text: "🚫 Blacklist & Re-search", CallbackData: fmt.Sprintf("ep_bl_ask:%d", epID)},
 				},
 				{
-					{Text: "🔙 Back", CallbackData: fmt.Sprintf("ep_back:%d", epID)},
+					{Text: "← Back", CallbackData: fmt.Sprintf("ep_back:%d", epID)},
 				},
 			},
 		}
@@ -709,7 +709,7 @@ func handleBotCallback(
 					{Text: "⚠️ Confirm Blacklist & Re-search", CallbackData: fmt.Sprintf("bl_ep:%d", epID)},
 				},
 				{
-					{Text: "🔙 Cancel", CallbackData: fmt.Sprintf("ep_opt:%d", epID)},
+					{Text: "← Cancel", CallbackData: fmt.Sprintf("ep_opt:%d", epID)},
 				},
 			},
 		}
@@ -721,7 +721,7 @@ func handleBotCallback(
 			_ = client.AnswerCallbackQuery(token, cb.ID, "Invalid episode ID")
 			return
 		}
-		_ = client.AnswerCallbackQuery(token, cb.ID, "🔙 Back")
+		_ = client.AnswerCallbackQuery(token, cb.ID, "← Back")
 		releaseURL := ""
 		epTorrentRepo := episodeTorrentRepository.NewEpisodeTorrentRepository(db)
 		if epTorr, err := epTorrentRepo.GetByEpisodeID(epID); err == nil {
@@ -762,7 +762,7 @@ func handleBotCallback(
 					{Text: "❌ Remove Download", CallbackData: "dl_rm_ask:" + hash},
 				},
 				{
-					{Text: "🔙 Back to Downloads", CallbackData: "cmd:downloads"},
+					{Text: "← Back to Downloads", CallbackData: "cmd:downloads"},
 				},
 			},
 		}
@@ -781,7 +781,7 @@ func handleBotCallback(
 					{Text: "⚠️ Confirm Blacklist", CallbackData: "q_bl:" + hash},
 				},
 				{
-					{Text: "🔙 Cancel", CallbackData: "dl_opt:" + hash},
+					{Text: "← Cancel", CallbackData: "dl_opt:" + hash},
 				},
 			},
 		}
@@ -800,7 +800,7 @@ func handleBotCallback(
 					{Text: "⚠️ Confirm Remove", CallbackData: "q_rm:" + hash},
 				},
 				{
-					{Text: "🔙 Cancel", CallbackData: "dl_opt:" + hash},
+					{Text: "← Cancel", CallbackData: "dl_opt:" + hash},
 				},
 			},
 		}
