@@ -119,3 +119,20 @@ func TestGetLatestChatID(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeBotCommand_And_AuthGuard(t *testing.T) {
+	cmd, arg := normalizeBotCommand("/add@MyGorgonBot Frieren Beyond")
+	if cmd != "/add" || arg != "Frieren Beyond" {
+		t.Fatalf("unexpected normalized command: cmd=%q arg=%q", cmd, arg)
+	}
+
+	if !isAuthorizedChat("", "999") {
+		t.Fatal("expected empty configured chat ID to allow setup messages")
+	}
+	if !isAuthorizedChat("12345", "12345") {
+		t.Fatal("expected matching chat ID to be authorized")
+	}
+	if isAuthorizedChat("12345", "99999") {
+		t.Fatal("expected mismatched chat ID to be rejected")
+	}
+}

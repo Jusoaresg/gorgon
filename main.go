@@ -59,8 +59,8 @@ func main() {
 	schedManager := scheduler.NewManager(dependencies.DB)
 	schedManager.Start(ctx)
 
-	// Start Telegram bot listener with context
-	telegramService.StartTelegramBotListener(ctx, dependencies.DB)
+	// Start Telegram bot listener with context and remote episode search trigger
+	telegramService.StartTelegramBotListener(ctx, dependencies.DB, dependencies.Episode.EpisodeSearchSvc)
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
