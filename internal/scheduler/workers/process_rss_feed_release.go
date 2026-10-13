@@ -1,20 +1,17 @@
 package workers
 
 import (
-	"log/slog"
-	"strings"
-
 	"github.com/jmoiron/sqlx"
 	"github.com/jusoaresg/gorgon/config"
 	"github.com/jusoaresg/gorgon/external/prowlarr/schema"
 	"github.com/jusoaresg/gorgon/internal/episode/model"
+	episodeRepository "github.com/jusoaresg/gorgon/internal/episode/repository"
 	episodeService "github.com/jusoaresg/gorgon/internal/episode/service"
 	episodeTorrentRepository "github.com/jusoaresg/gorgon/internal/episode_torrent/repository"
-	filter "github.com/jusoaresg/gorgon/internal/filter"
+	"github.com/jusoaresg/gorgon/internal/filter"
 	filterService "github.com/jusoaresg/gorgon/internal/filter/service"
 	seasonRepository "github.com/jusoaresg/gorgon/internal/season/repository"
 	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
-	"github.com/jusoaresg/gorgon/utils"
 )
 
 type RssReleaseProcessor struct {
@@ -35,6 +32,7 @@ func NewRssReleaseProcessor(db *sqlx.DB) RssReleaseProcessor {
 	}
 }
 
+// RssProcessRelease delegates evaluation, scoring, upgrade checks, and downloading to EpisodeSearchService.
 func (rss *RssReleaseProcessor) RssProcessRelease(ep model.Episode, responses []schema.SearchResponse) error {
 	logger := config.GetLogger().WithGroup("worker").With("name", "RssProcessRelease")
 
@@ -43,94 +41,84 @@ func (rss *RssReleaseProcessor) RssProcessRelease(ep model.Episode, responses []
 		return err
 	}
 
-	settings, err := filterService.ResolveSettings(rss.db, show.ID)
-	if err != nil {
-		return err
-	}
+	searchSvc := episodeService.NewEpisodeSearchService(
+		rss.db,
+		logger,
+		&episodeService.EpisodeSearcher{},
+		rss.downloader,
+		episodeRepository.NewEpisodeRepository(rss.db),
+		rss.showRepo,
+	)
 
-	profile, err := filterService.ResolveProfile(rss.db, settings)
-	if err != nil {
-		return err
-	}
+	_, err = searchSvc.ProcessEpisodeReleases(ep, show, responses, false)
+	return err
+}
 
-	ctx, err := filterService.BuildContext(rss.db, show, ep.Season, ep.Number, settings)
-	if err != nil {
-		return err
-	}
-
-	termKeys := make([]string, 0)
-	for _, pattern := range filterService.SearchPatterns(profile, settings.ShowType) {
-		for _, name := range ctx.AllNames() {
-			query, err := filter.ExpandQuery(pattern, ctx, name)
-			if err != nil {
-				continue
-			}
-			termKeys = append(termKeys, strings.ToLower(query))
-		}
-	}
-
-	var processedResponses []schema.SearchResponse
-
-	responseSeen := make(map[string]struct{})
-	for _, response := range responses {
-		title := utils.NormalizeTitle(response.Title)
-
-		for _, term := range termKeys {
-			if strings.Contains(title, term) {
-				if _, seen := responseSeen[title]; !seen {
-					processedResponses = append(processedResponses, response)
-					responseSeen[title] = struct{}{}
-				}
-				break
-			}
-		}
-	}
-
-	processedResponses = episodeService.FilterAndScoreResponses(processedResponses, profile, ctx)
-	if len(processedResponses) == 0 {
-		logger.Debug("No matching releases after filtering")
+// MatchReleasesToEpisodes performs a release-first pass by grouping episodes per show,
+// matching RSS items against each show's title/aliases once, and returning only episodes that have matching releases.
+func (rss *RssReleaseProcessor) MatchReleasesToEpisodes(episodes []model.Episode, responses []schema.SearchResponse) []EpisodeJob {
+	if len(episodes) == 0 || len(responses) == 0 {
 		return nil
 	}
 
-	bestResponse := processedResponses[0]
-	bestScore := episodeService.CalculateScore(bestResponse, profile, ctx)
-
-	// Handle upgrades for episodes already snatched or downloaded
-	if ep.Tracking == model.TrackingDownloaded || ep.Tracking == model.TrackingSnatched {
-		existingTorrent, err := rss.episodeTorrentRepo.GetByEpisodeID(ep.ID)
-		existingScore := 0
-		if err == nil {
-			existingScore = existingTorrent.Score
-		}
-
-		if !episodeService.ShouldUpgrade(ep.Tracking, profile, existingScore, bestScore) {
-			logger.Debug("Candidate release does not qualify for upgrade",
-				slog.Int64("episode_id", ep.ID),
-				slog.Int("existing_score", existingScore),
-				slog.Int("candidate_score", bestScore),
-			)
-			return nil
-		}
-
-		logger.Info("Triggering release upgrade via RSS feed",
-			slog.Int64("episode_id", ep.ID),
-			slog.Int64("show_id", ep.ShowID),
-			slog.Int("old_score", existingScore),
-			slog.Int("new_score", bestScore),
-			slog.Int("cutoff", profile.UpgradeUntilScore),
-			slog.String("new_release", bestResponse.Title),
-		)
-
-		return rss.downloader.UpgradeEpisode(ep, bestResponse, bestScore)
+	byShow := make(map[int64][]model.Episode)
+	for _, ep := range episodes {
+		byShow[ep.ShowID] = append(byShow[ep.ShowID], ep)
 	}
 
-	// Standard download for wanted or missing episodes
-	logger.Info(
-		"Downloading episode",
-		slog.String("title", bestResponse.Title),
-		slog.Int64("show_id", ep.ShowID),
-		slog.Int64("episode_id", ep.ID),
-		slog.Int("score", bestScore),
-	)
-	return rss.downloader.DownloadEpisode(ep, bestResponse, bestScore)
+	var jobs []EpisodeJob
+	for showID, showEpisodes := range byShow {
+		show, err := rss.showRepo.GetById(showID)
+		if err != nil {
+			continue
+		}
+
+		settings, err := filterService.ResolveSettings(rss.db, showID)
+		if err != nil {
+			continue
+		}
+
+		showCtx, err := filterService.BuildContext(rss.db, show, 0, 0, settings)
+		if err != nil {
+			continue
+		}
+
+		// Filter RSS items that match this show's title or aliases
+		var showResponses []schema.SearchResponse
+		for _, r := range responses {
+			name := r.Filename
+			if name == "" {
+				name = r.Title
+			}
+			if episodeService.MatchShowTitle(name, showCtx) {
+				showResponses = append(showResponses, r)
+			}
+		}
+
+		if len(showResponses) == 0 {
+			continue
+		}
+
+		// Match specific episodes within the show
+		for _, ep := range showEpisodes {
+			var epResponses []schema.SearchResponse
+			for _, r := range showResponses {
+				name := r.Filename
+				if name == "" {
+					name = r.Title
+				}
+				if filter.MatchEpisode(name, ep.Season, ep.Number, showCtx.ShowType) {
+					epResponses = append(epResponses, r)
+				}
+			}
+			if len(epResponses) > 0 {
+				jobs = append(jobs, EpisodeJob{
+					Episode:   ep,
+					Responses: epResponses,
+				})
+			}
+		}
+	}
+
+	return jobs
 }
