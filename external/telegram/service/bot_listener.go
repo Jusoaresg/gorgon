@@ -457,7 +457,7 @@ func sendShowsListPaginated(client *TelegramService, token, chatID string, db *s
 
 		rows = append(rows, []schema.InlineKeyboardButton{
 			{
-				Text:         fmt.Sprintf("🎬 #%d • %s (%d/%d)", orderNum, s.Show.Name, downloaded, monitored),
+				Text:         fmt.Sprintf("🎬 #%d • %s", orderNum, s.Show.Name),
 				CallbackData: fmt.Sprintf("sh_ctl:%d:%d", s.Show.ID, page),
 			},
 		})
