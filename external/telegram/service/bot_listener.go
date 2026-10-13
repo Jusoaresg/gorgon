@@ -341,14 +341,11 @@ func sendDownloadsStatus(client *TelegramService, token, chatID string, db *sqlx
 		item := items[i]
 		pct := int(item.Torrent.Progress * 100)
 		label := html.EscapeString(item.Torrent.Name)
-		shortLabel := item.Torrent.Name
+		btnLabel := fmt.Sprintf("#%d • %s", i+1, item.Torrent.Name)
 		if item.Episode != nil {
 			epCode := fmt.Sprintf("S%02dE%02d", item.Episode.Season, item.Episode.Number)
 			label = fmt.Sprintf("%s — %s", html.EscapeString(item.Episode.ShowName), epCode)
-			shortLabel = fmt.Sprintf("%s — %s", item.Episode.ShowName, epCode)
-		}
-		if len(shortLabel) > 30 {
-			shortLabel = shortLabel[:30] + "…"
+			btnLabel = fmt.Sprintf("#%d • %s • %s", i+1, epCode, item.Episode.ShowName)
 		}
 
 		totalSize := item.Torrent.Size
@@ -359,13 +356,12 @@ func sendDownloadsStatus(client *TelegramService, token, chatID string, db *sqlx
 		if downloadedBytes < 0 {
 			downloadedBytes = 0
 		}
-		sizeInfo := ""
-		if totalSize > 0 {
-			sizeInfo = fmt.Sprintf(" (<code>%s / %s</code>)", formatBotBytes(downloadedBytes), formatBotBytes(totalSize))
-		}
 
 		sb.WriteString(fmt.Sprintf("<b>#%d</b> 🎬 <b>%s</b>\n", i+1, label))
-		sb.WriteString(fmt.Sprintf("  ├ <b>Progress:</b> <code>%d%%</code>%s • %s\n", pct, sizeInfo, html.EscapeString(item.Torrent.State)))
+		sb.WriteString(fmt.Sprintf("  ├ <b>Progress:</b> <code>%d%%</code> (%s)\n", pct, html.EscapeString(item.Torrent.State)))
+		if totalSize > 0 {
+			sb.WriteString(fmt.Sprintf("  ├ <b>Size:</b> <code>%s / %s</code>\n", formatBotBytes(downloadedBytes), formatBotBytes(totalSize)))
+		}
 		sb.WriteString(fmt.Sprintf("  └ <b>Speed:</b> <code>%s/s</code> • <b>Seeds:</b> %d\n\n", formatBotBytes(int64(item.Torrent.DlSpeed)), item.Torrent.NumSeeds))
 
 		hash := strings.ToLower(strings.TrimSpace(item.Torrent.Hash))
@@ -375,10 +371,10 @@ func sendDownloadsStatus(client *TelegramService, token, chatID string, db *sqlx
 			if isPaused {
 				btnIcon = "⏸️"
 			}
-			// Single full-width button per download so the series name and episode are clearly readable
+			// Put #<order> and <S01E01> first so the episode code is never truncated on mobile
 			rows = append(rows, []schema.InlineKeyboardButton{
 				{
-					Text:         fmt.Sprintf("%s #%d • %s (%d%%)", btnIcon, i+1, shortLabel, pct),
+					Text:         fmt.Sprintf("%s %s", btnIcon, btnLabel),
 					CallbackData: "dl_opt:" + hash,
 				},
 			})
