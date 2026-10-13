@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -44,6 +45,39 @@ type EpisodeSearchTrigger interface {
 	ProcessSeasonEpisodes(seasonID int)
 }
 
+var (
+	listenerStateMu   sync.RWMutex
+	lastSeenByToken   = make(map[string]string)
+	pausePollingUntil time.Time
+)
+
+func RecordSeenChatID(token, chatID string) {
+	if token == "" || chatID == "" {
+		return
+	}
+	listenerStateMu.Lock()
+	lastSeenByToken[token] = chatID
+	listenerStateMu.Unlock()
+}
+
+func GetLastSeenChatID(token string) string {
+	listenerStateMu.RLock()
+	defer listenerStateMu.RUnlock()
+	return lastSeenByToken[token]
+}
+
+func PauseBotListenerPolling(d time.Duration) {
+	listenerStateMu.Lock()
+	pausePollingUntil = time.Now().Add(d)
+	listenerStateMu.Unlock()
+}
+
+func isBotPollingPaused() bool {
+	listenerStateMu.RLock()
+	defer listenerStateMu.RUnlock()
+	return time.Now().Before(pausePollingUntil)
+}
+
 func isAuthorizedChat(configuredChatID, incomingChatID string) bool {
 	expected := strings.TrimSpace(configuredChatID)
 	if expected == "" {
@@ -74,13 +108,24 @@ func StartTelegramBotListener(ctx context.Context, db *sqlx.DB, searchTriggers .
 			default:
 			}
 
-			cfg, err := config.LoadConfig()
-			if err != nil || cfg.TelegramBotApiKey == "" {
+			if isBotPollingPaused() {
 				select {
 				case <-ctx.Done():
 					logger.Info("Telegram bot listener stopped")
 					return
-				case <-time.After(10 * time.Second):
+				case <-time.After(1 * time.Second):
+					continue
+				}
+			}
+
+			cfg, err := config.LoadConfig()
+			// Only long-poll when both Bot API Key and Chat ID are configured so auto-detect never hits 409 Conflict
+			if err != nil || strings.TrimSpace(cfg.TelegramBotApiKey) == "" || strings.TrimSpace(cfg.TelegramChatID) == "" {
+				select {
+				case <-ctx.Done():
+					logger.Info("Telegram bot listener stopped")
+					return
+				case <-time.After(5 * time.Second):
 					continue
 				}
 			}
@@ -120,6 +165,7 @@ func StartTelegramBotListener(ctx context.Context, db *sqlx.DB, searchTriggers .
 					cbChatID := ""
 					if u.CallbackQuery.Message != nil {
 						cbChatID = strconv.FormatInt(u.CallbackQuery.Message.Chat.ID, 10)
+						RecordSeenChatID(token, cbChatID)
 					}
 					if cbChatID == "" || !isAuthorizedChat(cfg.TelegramChatID, cbChatID) {
 						logger.Warn("Rejected unauthorized callback query", slog.String("chatID", cbChatID))
@@ -142,6 +188,7 @@ func StartTelegramBotListener(ctx context.Context, db *sqlx.DB, searchTriggers .
 				}
 
 				chatID := strconv.FormatInt(msg.Chat.ID, 10)
+				RecordSeenChatID(token, chatID)
 				if !isAuthorizedChat(cfg.TelegramChatID, chatID) {
 					logger.Warn("Ignored command from unauthorized chat ID", slog.String("chatID", chatID))
 					continue
@@ -314,8 +361,7 @@ func sendDownloadsStatus(client *TelegramService, token, chatID string, db *sqlx
 			}
 			row := []schema.InlineKeyboardButton{
 				toggleBtn,
-				{Text: "🚫 Blacklist", CallbackData: "q_bl:" + hash},
-				{Text: "❌ Remove", CallbackData: "q_rm:" + hash},
+				{Text: fmt.Sprintf("⚙️ Options (%s)", shortLabel), CallbackData: "dl_opt:" + hash},
 			}
 			rows = append(rows, row)
 		}
@@ -628,6 +674,62 @@ func handleBotCallback(
 			_ = client.SendMessage(token, chatID, fmt.Sprintf("✅ <b>%s</b> synced with TVMaze!", html.EscapeString(show.Name)))
 		}(showID)
 
+	case strings.HasPrefix(data, "ep_opt:"):
+		epID, err := strconv.ParseInt(strings.TrimPrefix(data, "ep_opt:"), 10, 64)
+		if err != nil || epID <= 0 || cb.Message == nil {
+			_ = client.AnswerCallbackQuery(token, cb.ID, "Invalid episode option")
+			return
+		}
+		_ = client.AnswerCallbackQuery(token, cb.ID, "⚙️ Episode options")
+		markup := &schema.InlineKeyboardMarkup{
+			InlineKeyboard: [][]schema.InlineKeyboardButton{
+				{
+					{Text: "🔍 Re-search Episode", CallbackData: fmt.Sprintf("se:%d", epID)},
+				},
+				{
+					{Text: "🚫 Blacklist & Re-search", CallbackData: fmt.Sprintf("ep_bl_ask:%d", epID)},
+				},
+				{
+					{Text: "🔙 Back", CallbackData: fmt.Sprintf("ep_back:%d", epID)},
+				},
+			},
+		}
+		_ = client.EditMessageReplyMarkup(token, chatID, cb.Message.MessageID, markup)
+
+	case strings.HasPrefix(data, "ep_bl_ask:"):
+		epID, err := strconv.ParseInt(strings.TrimPrefix(data, "ep_bl_ask:"), 10, 64)
+		if err != nil || epID <= 0 || cb.Message == nil {
+			_ = client.AnswerCallbackQuery(token, cb.ID, "Invalid episode ID")
+			return
+		}
+		_ = client.AnswerCallbackQuery(token, cb.ID, "⚠️ Confirm blacklist?")
+		markup := &schema.InlineKeyboardMarkup{
+			InlineKeyboard: [][]schema.InlineKeyboardButton{
+				{
+					{Text: "⚠️ Confirm Blacklist & Re-search", CallbackData: fmt.Sprintf("bl_ep:%d", epID)},
+				},
+				{
+					{Text: "🔙 Cancel", CallbackData: fmt.Sprintf("ep_opt:%d", epID)},
+				},
+			},
+		}
+		_ = client.EditMessageReplyMarkup(token, chatID, cb.Message.MessageID, markup)
+
+	case strings.HasPrefix(data, "ep_back:"):
+		epID, err := strconv.ParseInt(strings.TrimPrefix(data, "ep_back:"), 10, 64)
+		if err != nil || epID <= 0 || cb.Message == nil {
+			_ = client.AnswerCallbackQuery(token, cb.ID, "Invalid episode ID")
+			return
+		}
+		_ = client.AnswerCallbackQuery(token, cb.ID, "🔙 Back")
+		releaseURL := ""
+		epTorrentRepo := episodeTorrentRepository.NewEpisodeTorrentRepository(db)
+		if epTorr, err := epTorrentRepo.GetByEpisodeID(epID); err == nil {
+			releaseURL = epTorr.InfoUrl
+		}
+		markup := BuildSnatchedDefaultMarkup(releaseURL, epID)
+		_ = client.EditMessageReplyMarkup(token, chatID, cb.Message.MessageID, markup)
+
 	case strings.HasPrefix(data, "bl_ep:"):
 		epID, err := strconv.ParseInt(strings.TrimPrefix(data, "bl_ep:"), 10, 64)
 		if err != nil || epID <= 0 {
@@ -635,7 +737,74 @@ func handleBotCallback(
 			return
 		}
 		_ = client.AnswerCallbackQuery(token, cb.ID, "🚫 Blacklisting release...")
+		if cb.Message != nil {
+			_ = client.EditMessageReplyMarkup(token, chatID, cb.Message.MessageID, nil)
+		}
 		blacklistEpisodeFromBot(client, token, chatID, db, epID, searchTrigger, logger)
+
+	case strings.HasPrefix(data, "dl_opt:"):
+		hash := strings.TrimPrefix(data, "dl_opt:")
+		if cb.Message == nil || len(hash) != 40 {
+			_ = client.AnswerCallbackQuery(token, cb.ID, "Invalid torrent hash")
+			return
+		}
+		_ = client.AnswerCallbackQuery(token, cb.ID, "⚙️ Torrent options")
+		markup := &schema.InlineKeyboardMarkup{
+			InlineKeyboard: [][]schema.InlineKeyboardButton{
+				{
+					{Text: "⏸️ Pause", CallbackData: "q_pa:" + hash},
+					{Text: "▶️ Resume", CallbackData: "q_re:" + hash},
+				},
+				{
+					{Text: "🚫 Blacklist & Re-search", CallbackData: "dl_bl_ask:" + hash},
+				},
+				{
+					{Text: "❌ Remove Download", CallbackData: "dl_rm_ask:" + hash},
+				},
+				{
+					{Text: "🔙 Back to Downloads", CallbackData: "cmd:downloads"},
+				},
+			},
+		}
+		_ = client.EditMessageReplyMarkup(token, chatID, cb.Message.MessageID, markup)
+
+	case strings.HasPrefix(data, "dl_bl_ask:"):
+		hash := strings.TrimPrefix(data, "dl_bl_ask:")
+		if cb.Message == nil || len(hash) != 40 {
+			_ = client.AnswerCallbackQuery(token, cb.ID, "Invalid torrent hash")
+			return
+		}
+		_ = client.AnswerCallbackQuery(token, cb.ID, "⚠️ Confirm blacklist?")
+		markup := &schema.InlineKeyboardMarkup{
+			InlineKeyboard: [][]schema.InlineKeyboardButton{
+				{
+					{Text: "⚠️ Confirm Blacklist", CallbackData: "q_bl:" + hash},
+				},
+				{
+					{Text: "🔙 Cancel", CallbackData: "dl_opt:" + hash},
+				},
+			},
+		}
+		_ = client.EditMessageReplyMarkup(token, chatID, cb.Message.MessageID, markup)
+
+	case strings.HasPrefix(data, "dl_rm_ask:"):
+		hash := strings.TrimPrefix(data, "dl_rm_ask:")
+		if cb.Message == nil || len(hash) != 40 {
+			_ = client.AnswerCallbackQuery(token, cb.ID, "Invalid torrent hash")
+			return
+		}
+		_ = client.AnswerCallbackQuery(token, cb.ID, "⚠️ Confirm removal?")
+		markup := &schema.InlineKeyboardMarkup{
+			InlineKeyboard: [][]schema.InlineKeyboardButton{
+				{
+					{Text: "⚠️ Confirm Remove", CallbackData: "q_rm:" + hash},
+				},
+				{
+					{Text: "🔙 Cancel", CallbackData: "dl_opt:" + hash},
+				},
+			},
+		}
+		_ = client.EditMessageReplyMarkup(token, chatID, cb.Message.MessageID, markup)
 
 	case strings.HasPrefix(data, "q_pa:"):
 		hash := strings.TrimPrefix(data, "q_pa:")

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jusoaresg/gorgon/config"
 	"github.com/jusoaresg/gorgon/external/telegram/schema"
@@ -92,35 +93,47 @@ func (s *TelegramService) AnswerCallbackQuery(token, callbackQueryID, text strin
 	return err
 }
 
+func (s *TelegramService) EditMessageReplyMarkup(token, chatID string, messageID int64, replyMarkup *schema.InlineKeyboardMarkup) error {
+	if token == "" || chatID == "" || messageID == 0 {
+		return nil
+	}
+	_, err := s.ApiService.Post(fmt.Sprintf("bot%s/editMessageReplyMarkup", token), schema.EditMessageReplyMarkupRequest{
+		ChatID:      chatID,
+		MessageID:   messageID,
+		ReplyMarkup: replyMarkup,
+	}, nil, nil)
+	return err
+}
+
+func BuildSnatchedDefaultMarkup(releaseURL string, episodeID int64) *schema.InlineKeyboardMarkup {
+	var row []schema.InlineKeyboardButton
+	if releaseURL != "" && (strings.HasPrefix(releaseURL, "http://") || strings.HasPrefix(releaseURL, "https://")) {
+		row = append(row, schema.InlineKeyboardButton{
+			Text: "🔗 View Release",
+			URL:  releaseURL,
+		})
+	}
+	if episodeID > 0 {
+		row = append(row, schema.InlineKeyboardButton{
+			Text:         "⚙️ Options",
+			CallbackData: fmt.Sprintf("ep_opt:%d", episodeID),
+		})
+	}
+	if len(row) == 0 {
+		return nil
+	}
+	return &schema.InlineKeyboardMarkup{
+		InlineKeyboard: [][]schema.InlineKeyboardButton{row},
+	}
+}
+
 func (s *TelegramService) SendEpisodeSnatched(input schema.EpisodeSnatchedTemplateInput) error {
 	if s.ApiKey == "" || s.ChatID == "" {
 		return ErrTelegramNotConfigured
 	}
 
 	msg := schema.FormatEpisodeSnatched(input)
-
-	var rows [][]schema.InlineKeyboardButton
-	if input.ReleaseURL != "" && (strings.HasPrefix(input.ReleaseURL, "http://") || strings.HasPrefix(input.ReleaseURL, "https://")) {
-		rows = append(rows, []schema.InlineKeyboardButton{
-			{
-				Text: "🔗 View Release",
-				URL:  input.ReleaseURL,
-			},
-		})
-	}
-	if input.EpisodeID > 0 {
-		rows = append(rows, []schema.InlineKeyboardButton{
-			{
-				Text:         "🚫 Blacklist & Re-search",
-				CallbackData: fmt.Sprintf("bl_ep:%d", input.EpisodeID),
-			},
-		})
-	}
-
-	var markup *schema.InlineKeyboardMarkup
-	if len(rows) > 0 {
-		markup = &schema.InlineKeyboardMarkup{InlineKeyboard: rows}
-	}
+	markup := BuildSnatchedDefaultMarkup(input.ReleaseURL, input.EpisodeID)
 
 	return s.SendMessageWithMarkup(s.ApiKey, s.ChatID, msg, markup)
 }
@@ -165,9 +178,21 @@ func (s *TelegramService) SendTestNotification() error {
 }
 
 func (s *TelegramService) GetLatestChatID(token string) (string, error) {
+	if cached := GetLastSeenChatID(token); cached != "" {
+		return cached, nil
+	}
+
+	PauseBotListenerPolling(4 * time.Second)
+
 	var response schema.GetUpdatesResponse
 	endpoint := fmt.Sprintf("bot%s/getUpdates", token)
 	if err := s.ApiService.Get(endpoint, &response); err != nil {
+		if cached := GetLastSeenChatID(token); cached != "" {
+			return cached, nil
+		}
+		if cfg, cfgErr := config.LoadConfig(); cfgErr == nil && cfg.TelegramBotApiKey == token && cfg.TelegramChatID != "" {
+			return cfg.TelegramChatID, nil
+		}
 		return "", fmt.Errorf("failed to fetch updates from Telegram: %w", err)
 	}
 

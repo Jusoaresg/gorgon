@@ -26,3 +26,9 @@ type AnswerCallbackQueryRequest struct {
 	CallbackQueryID string `json:"callback_query_id"`
 	Text            string `json:"text,omitempty"`
 }
+
+type EditMessageReplyMarkupRequest struct {
+	ChatID      string                `json:"chat_id"`
+	MessageID   int64                 `json:"message_id"`
+	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
+}
