@@ -13,6 +13,7 @@ import (
 	filterService "github.com/jusoaresg/gorgon/internal/filter/service"
 	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
 	showModel "github.com/jusoaresg/gorgon/internal/show/model"
+	"github.com/jusoaresg/gorgon/utils"
 )
 
 type SearchOptions struct {
@@ -21,6 +22,7 @@ type SearchOptions struct {
 }
 
 type EpisodeSearcherInterface interface {
+	FetchRssFeed(limit int) ([]schema.SearchResponse, error)
 	SearchEpisodeByQuery(query string) ([]schema.SearchResponse, error)
 	SearchEpisodeAliasesById(episode episodeModel.Episode, show showModel.Show, db *sqlx.DB, profile *filter.Profile, ctx filter.Context) ([]schema.SearchResponse, error)
 	SearchAliasForEpisode(episode episodeModel.Episode, show showModel.Show, alias string, db *sqlx.DB, opts SearchOptions) ([]EvaluatedResult, error)
@@ -42,6 +44,25 @@ func (s *EpisodeSearcher) getEnabledIndexerIDs(logger *slog.Logger) ([]int, erro
 		}
 	}
 	return indexerIds, nil
+}
+
+func (s *EpisodeSearcher) FetchRssFeed(limit int) ([]schema.SearchResponse, error) {
+	logger := config.GetLogger()
+	indexerIds, err := s.getEnabledIndexerIDs(logger)
+	if err != nil {
+		return nil, err
+	}
+
+	prowlarrService, err := service.NewProwlarrSearchService(logger)
+	if err != nil {
+		return nil, err
+	}
+
+	var response []schema.SearchResponse
+	if err := prowlarrService.FetchRssFeed(limit, &response, indexerIds...); err != nil {
+		return nil, err
+	}
+	return response, nil
 }
 
 func (s *EpisodeSearcher) SearchEpisodeByQuery(query string) ([]schema.SearchResponse, error) {
@@ -86,6 +107,9 @@ func (s *EpisodeSearcher) SearchAliasForEpisode(episode episodeModel.Episode, sh
 	ctx, err := filterService.BuildContext(db, show, episode.Season, episode.Number, settings)
 	if err != nil {
 		return nil, err
+	}
+	if normAlias := utils.NormalizeTitle(alias); normAlias != "" && normAlias != ctx.Show {
+		ctx.Aliases = append(ctx.Aliases, normAlias)
 	}
 
 	indexerIds, err := s.getEnabledIndexerIDs(logger)
