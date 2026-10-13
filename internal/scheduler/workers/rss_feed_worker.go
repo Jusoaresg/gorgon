@@ -2,8 +2,8 @@ package workers
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -12,6 +12,13 @@ import (
 	"github.com/jusoaresg/gorgon/external/prowlarr/service"
 	"github.com/jusoaresg/gorgon/internal/episode/model"
 	"github.com/jusoaresg/gorgon/internal/episode/repository"
+	episodeService "github.com/jusoaresg/gorgon/internal/episode/service"
+)
+
+const (
+	rssFetchLimit     = 100
+	rssPollInterval   = 3 * time.Minute
+	rssSeenCacheTTL   = 6 * time.Hour
 )
 
 // NOTE: Responses could be a pointer
@@ -20,9 +27,21 @@ type EpisodeJob struct {
 	Responses []schema.SearchResponse
 }
 
+func releaseIdentifier(r schema.SearchResponse) string {
+	if r.InfoHash != "" {
+		return r.InfoHash
+	}
+	if r.Guid != "" {
+		return r.Guid
+	}
+	return r.Title
+}
+
 func StartRssEpisodeFetcherWorker(ctx context.Context, workerCount int, prowlarrService *service.ProwlarrSearchService) {
 	logger := config.GetLogger().WithGroup("worker").With("name", "StartRssFeedWorker")
 	rssProcessor := NewRssReleaseProcessor(config.GetSQLite())
+	searcher := &episodeService.EpisodeSearcher{}
+	seenReleases := make(map[string]time.Time)
 
 	jobChan := make(chan EpisodeJob, workerCount)
 
@@ -63,7 +82,7 @@ func StartRssEpisodeFetcherWorker(ctx context.Context, workerCount int, prowlarr
 		}()
 	}
 
-	ticker := time.NewTicker(time.Minute * 1)
+	ticker := time.NewTicker(rssPollInterval)
 	defer func() {
 		ticker.Stop()
 		close(jobChan)
@@ -76,34 +95,62 @@ func StartRssEpisodeFetcherWorker(ctx context.Context, workerCount int, prowlarr
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			logger.Info("checking for wanted episodes")
+			logger.Info("Polling RSS feed for latest indexer releases")
 
 			episodes := fetchRssFeedWantedEpisodes()
 			if len(episodes) == 0 {
-				logger.Info("no episodes found with status 'wanted' or 'missing'")
+				logger.Debug("No released tracked episodes eligible for RSS check")
 				continue
 			}
 
-			var currentResponses []schema.SearchResponse
+			// Prune expired entries from seenReleases cache
+			now := time.Now()
+			for k, ts := range seenReleases {
+				if now.Sub(ts) > rssSeenCacheTTL {
+					delete(seenReleases, k)
+				}
+			}
 
-			//TODO: Required words here
-			query := strings.Join([]string{"multi subs"}, " ")
-			prowlarrService.Search(&schema.SearchRequest{Query: query}, &currentResponses)
+			currentResponses, err := searcher.FetchRssFeed(rssFetchLimit)
+			if err != nil && prowlarrService != nil {
+				// Fallback to direct prowlarrService if indexer lookup fails
+				err = prowlarrService.FetchRssFeed(rssFetchLimit, &currentResponses)
+			}
+			if err != nil {
+				logger.Error("Failed to fetch RSS feed from Prowlarr", slog.String("error", err.Error()))
+				continue
+			}
+			if len(currentResponses) == 0 {
+				continue
+			}
 
-			for _, ep := range episodes {
+			matchedJobs := rssProcessor.MatchReleasesToEpisodes(episodes, currentResponses)
+			for _, job := range matchedJobs {
+				// Filter out releases already evaluated for this specific episode and tracking state
+				var unseenForEpisode []schema.SearchResponse
+				for _, r := range job.Responses {
+					cacheKey := fmt.Sprintf("%d:%s:%s", job.Episode.ID, job.Episode.Tracking, releaseIdentifier(r))
+					if _, seen := seenReleases[cacheKey]; !seen {
+						seenReleases[cacheKey] = now
+						unseenForEpisode = append(unseenForEpisode, r)
+					}
+				}
+				if len(unseenForEpisode) == 0 {
+					continue
+				}
+
+				job.Responses = unseenForEpisode
 				logger.Info(
-					"queuing episode for processing",
-					slog.Int64("episode_id", ep.ID),
-					slog.Int64("show_id", ep.ShowID),
-					slog.String("name", ep.Name),
+					"Queuing RSS matched episode for evaluation",
+					slog.Int64("episode_id", job.Episode.ID),
+					slog.Int64("show_id", job.Episode.ShowID),
+					slog.String("name", job.Episode.Name),
+					slog.Int("matched_releases", len(unseenForEpisode)),
 				)
 				select {
 				case <-ctx.Done():
 					return
-				case jobChan <- EpisodeJob{
-					Episode:   ep,
-					Responses: currentResponses,
-				}:
+				case jobChan <- job:
 				}
 			}
 		}
@@ -116,14 +163,14 @@ func fetchRssFeedWantedEpisodes() []model.Episode {
 
 	episodeRepository := repository.NewEpisodeRepository(db)
 
-	episodes, err := episodeRepository.ListByTracking(
+	episodes, err := episodeRepository.ListReleasedByTracking(
 		model.TrackingWanted,
 		model.TrackingMissing,
 		model.TrackingSnatched,
 		model.TrackingDownloaded,
 	)
 	if err != nil {
-		logger.Error("Failed to list episodes for RSS worker", slog.String("error", err.Error()))
+		logger.Error("Failed to list released episodes for RSS worker", slog.String("error", err.Error()))
 	}
 	return episodes
 }
