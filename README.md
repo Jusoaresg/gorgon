@@ -12,7 +12,7 @@ Built in **Go** with a **HTML + HTMX** frontend, Gorgon allows users to automati
 - 🌸 **Anime support & auto-detection**: Automatic anime classification from genres, dedicated anime search patterns, absolute episode numbering (`- 12`, `Ep 12`, `[12]`), and CRC32 hash stripping
 - 🔍 Search for episodes via Prowlarr indexers with standard and season-less release matching
 - 💾 Automate downloads with qBittorrent integration, including live speed monitoring and direct pause/resume torrent controls
-- ✈️ **Telegram notifications & bot**: Instant alerts for snatched and downloaded episodes, scheduled daily summaries, and interactive on-demand commands (`/summary`, `/ping`, `/start`)
+- ✈️ **Telegram remote control & rich notifications**: Full zero-port-forwarding remote control (`/downloads`, `/shows`, `/wanted`, `/add`, `/summary`) with a persistent 2x2 quick keyboard, slash-command autocomplete, release upgrade alerts (`Old → New` score & cutoff progress), and blacklist notifications
 - 🧹 Organize downloads into structured folders with symlinks
 - 🎛️ Keyword-based **filter engine**: profiles with `required` / `rejected` / `preferred` (scored) patterns, per-show search patterns and global defaults
 - 🏷️ Custom aliases per show, searched alongside the canonical name
@@ -211,20 +211,31 @@ Gorgon automatically detects anime series when added (via TVMaze genre/type tags
 
 ---
 
-## 🤖 Telegram Bot & Notifications
+## 🤖 Telegram Bot & Remote Control
 
-Gorgon includes native Telegram bot integration for real-time notifications, automated daily schedule overviews, and interactive bot commands (`/summary`, `/ping`, `/start`) without requiring open inbound ports or webhooks.
+Gorgon includes a native Telegram bot powered by outbound long-polling, turning Telegram into a full remote control and notification hub for your media server without opening inbound router ports or configuring webhooks.
 
-### 🔔 Event Notifications
+### 🔔 Event, Upgrade & Blacklist Notifications
 
-- **Episode Snatched**: Alerts when an episode release is grabbed and queued for download in qBittorrent, including indexer info and an inline **🔗 View Release** button.
-- **Episode Downloaded**: Alerts when the download completes and the episode is moved and organized.
-- **Lock-Screen Optimized**: The notification title is placed first (`✅ Downloaded: Show Name` / `📥 Snatched: Show Name`) so mobile and desktop push previews display immediate context.
+- **Episode Snatched (`📥 Snatched`)**: Alerts when an episode release is grabbed and sent to qBittorrent, showing its quality score, indexer, a **🔗 View Release** link, and a safe expandable **⚙️ Options** menu to re-search or blacklist & re-search with 2-step confirmation.
+- **Release Upgrades (`⬆️ Upgrade Snatched` / `⬆️ Upgraded`)**: Displays score progression (`Old Score → New Score`), filter profile cutoff status (`Score / Cutoff 🎯`), and the replaced release name.
+- **Release Blacklisted (`🚫 Blacklisted`)**: Notifies whenever a release is blacklisted (automatically on `stalledDL`/`metaDL` timeouts or manually) with the exact reason and a **🔗 View Release** button while Gorgon searches for a replacement.
+- **Episode Downloaded (`✅ Downloaded`)**: Confirms when downloads finish importing and symlinking into your library.
+- **Lock-Screen Optimized**: Notification headers place the action and show name first so mobile push previews give immediate context.
+
+### 🎛️ Interactive Remote Control
+
+- **Persistent 2x2 Quick Keyboard & Autocomplete**: Features a compact 2x2 reply keyboard (`📅 Today`, `📥 Downloads`, `📺 Shows`, `⏳ Wanted`) for one-tap access, alongside native `/` command autocomplete (`setMyCommands`).
+- **Active Downloads (`/downloads` or `/dl`)**: Displays live download/upload speeds, progress percentage, downloaded vs. total file size (`MB`/`GB`), and a per-torrent control menu to pause, resume, remove, or blacklist & re-search in-place.
+- **Library Browser (`/shows`)**: Paginated in-place series list where tapping any show opens its **Show Control Center** to search wanted episodes, sync metadata with TVMaze, or delete the series.
+- **Wanted Queue (`/wanted`)**: Paginated list of aired missing/wanted episodes with an **Episode Control Center** to trigger an immediate search, mark an episode as skipped, or jump to the show's control center.
+- **TVMaze Search & Add (`/add`)**: Supports both direct queries (`/add Dandadan`) and an interactive conversational prompt when `/add` is selected from the menu, opening a paginated TVMaze browser and a **Show Add Control Center** (`Future`, `All`, or `None` monitoring).
+- **Chat ID Authorization**: All bot commands and inline callbacks are strictly locked to your configured `TelegramChatID`.
 
 ### 📅 Scheduled Daily Summary
 
-- **Automated Morning Overview**: Sends an automated daily summary of episodes scheduled to air each day at your configured local time (e.g., `08:00`).
-- **Clean Tree Layout**: Displays show titles, episode codes, air times, and download statuses (`✅ Downloaded`, `📥 Snatched`, `⏳ Wanted`, `🔍 Missing`) in a structured tree format.
+- **Automated Morning Overview**: Sends an automated daily summary of episodes scheduled to air each day at your configured local time (e.g., `08:00`), or on-demand via `/summary` (`📅 Today`).
+- **Clean Tree Layout**: Displays show titles, episode codes, localized air times, and tracking statuses (`✅ Downloaded`, `📥 Snatched`, `⏳ Wanted`, `🔍 Missing`) in a structured tree format.
 
 ---
 
