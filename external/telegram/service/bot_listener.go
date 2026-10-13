@@ -555,13 +555,26 @@ func sendShowControlCenter(client *TelegramService, token, chatID string, db *sq
 	sendOrEditBotMessage(client, token, chatID, sb.String(), markup, editMsgID...)
 }
 
+const wantedPageSize = 5
+
 func sendWantedEpisodes(client *TelegramService, token, chatID string, db *sqlx.DB) {
+	sendWantedEpisodesPaginated(client, token, chatID, db, 0)
+}
+
+func sendWantedEpisodesPaginated(client *TelegramService, token, chatID string, db *sqlx.DB, page int, editMsgID ...int64) {
 	epRepo := episodeRepository.NewEpisodeRepository(db)
 	showRepo := showRepository.NewShowRepository(db)
 
 	episodes, err := epRepo.ListReleasedByTracking(episodeModel.TrackingWanted, episodeModel.TrackingMissing)
 	if err != nil || len(episodes) == 0 {
-		_ = client.SendMessage(token, chatID, "⏳ <b>Wanted Episodes</b>\n\n<i>All aired episodes are downloaded or snatched!</i>")
+		sendOrEditBotMessage(
+			client,
+			token,
+			chatID,
+			"⏳ <b>Wanted Episodes</b>\n\n<i>All aired episodes are downloaded or snatched!</i>",
+			nil,
+			editMsgID...,
+		)
 		return
 	}
 
@@ -572,44 +585,130 @@ func sendWantedEpisodes(client *TelegramService, token, chatID string, db *sqlx.
 		}
 	}
 
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("⏳ <b>Released Wanted Episodes (%d)</b>\n\n", len(episodes)))
-
-	var rows [][]schema.InlineKeyboardButton
-	limit := len(episodes)
-	if limit > 8 {
-		limit = 8
+	totalEpisodes := len(episodes)
+	totalPages := (totalEpisodes + wantedPageSize - 1) / wantedPageSize
+	if page < 0 {
+		page = 0
+	}
+	if page >= totalPages {
+		page = totalPages - 1
 	}
 
-	for i := 0; i < limit; i++ {
+	start := page * wantedPageSize
+	end := start + wantedPageSize
+	if end > totalEpisodes {
+		end = totalEpisodes
+	}
+
+	var sb strings.Builder
+	if totalPages > 1 {
+		sb.WriteString(fmt.Sprintf("⏳ <b>Released Wanted Episodes (%d)</b> • <i>Page %d/%d</i>\n\n\n", totalEpisodes, page+1, totalPages))
+	} else {
+		sb.WriteString(fmt.Sprintf("⏳ <b>Released Wanted Episodes (%d)</b>\n\n\n", totalEpisodes))
+	}
+
+	var rows [][]schema.InlineKeyboardButton
+
+	for i := start; i < end; i++ {
 		ep := episodes[i]
 		showName := showsMap[ep.ShowID]
 		if showName == "" {
 			showName = fmt.Sprintf("Show #%d", ep.ShowID)
 		}
+
+		orderNum := i + 1
 		epCode := fmt.Sprintf("S%02dE%02d", ep.Season, ep.Number)
-		sb.WriteString(fmt.Sprintf("🎬 <b>%s</b> — <code>%s</code>\n", html.EscapeString(showName), epCode))
-		if ep.Name != "" {
-			sb.WriteString(fmt.Sprintf("  └ <i>%s</i>\n", html.EscapeString(ep.Name)))
+		statusBadge := "⏳ Wanted"
+		if ep.Tracking == episodeModel.TrackingMissing {
+			statusBadge = "🔍 Missing"
 		}
 
-		shortShow := showName
-		if len(shortShow) > 18 {
-			shortShow = shortShow[:18]
+		sb.WriteString(fmt.Sprintf("<b>#%d</b> 🎬 <b>%s</b>\n", orderNum, html.EscapeString(showName)))
+		sb.WriteString(fmt.Sprintf("  ├ <b>Episode:</b> <code>%s</code> • %s\n", epCode, statusBadge))
+		if ep.Name != "" {
+			sb.WriteString(fmt.Sprintf("  └ <b>Title:</b> <i>%s</i>\n\n\n", html.EscapeString(ep.Name)))
+		} else {
+			sb.WriteString("  └ <b>Title:</b> <i>TBA</i>\n\n\n")
 		}
+
 		rows = append(rows, []schema.InlineKeyboardButton{
 			{
-				Text:         fmt.Sprintf("🔍 Search %s %s", shortShow, epCode),
-				CallbackData: fmt.Sprintf("se:%d", ep.ID),
+				Text:         fmt.Sprintf("⏳ #%d • %s • %s", orderNum, epCode, showName),
+				CallbackData: fmt.Sprintf("wt_ctl:%d:%d", ep.ID, page),
 			},
 		})
 	}
 
-	if len(episodes) > limit {
-		sb.WriteString(fmt.Sprintf("\n<i>Showing %d of %d wanted episodes.</i>", limit, len(episodes)))
+	if totalPages > 1 {
+		var navRow []schema.InlineKeyboardButton
+		if page > 0 {
+			navRow = append(navRow, schema.InlineKeyboardButton{
+				Text:         "← Prev",
+				CallbackData: fmt.Sprintf("wt_pg:%d", page-1),
+			})
+		}
+		if page < totalPages-1 {
+			navRow = append(navRow, schema.InlineKeyboardButton{
+				Text:         "Next →",
+				CallbackData: fmt.Sprintf("wt_pg:%d", page+1),
+			})
+		}
+		if len(navRow) > 0 {
+			rows = append(rows, navRow)
+		}
 	}
 
-	_ = client.SendMessageWithMarkup(token, chatID, strings.TrimSpace(sb.String()), &schema.InlineKeyboardMarkup{InlineKeyboard: rows})
+	sendOrEditBotMessage(
+		client,
+		token,
+		chatID,
+		strings.TrimSpace(sb.String()),
+		&schema.InlineKeyboardMarkup{InlineKeyboard: rows},
+		editMsgID...,
+	)
+}
+
+func sendWantedEpisodeControlCenter(client *TelegramService, token, chatID string, db *sqlx.DB, episodeID int64, returnPage int, editMsgID ...int64) {
+	epRepo := episodeRepository.NewEpisodeRepository(db)
+	showRepo := showRepository.NewShowRepository(db)
+
+	ep, err := epRepo.GetByID(episodeID)
+	if err != nil {
+		sendOrEditBotMessage(client, token, chatID, "⚠️ <b>Episode not found.</b>", nil, editMsgID...)
+		return
+	}
+
+	showName := fmt.Sprintf("Show #%d", ep.ShowID)
+	if s, err := showRepo.GetById(ep.ShowID); err == nil {
+		showName = s.Name
+	}
+
+	epCode := fmt.Sprintf("S%02dE%02d", ep.Season, ep.Number)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("🎛️ <b>%s</b> — <code>%s</code>\n", html.EscapeString(showName), epCode))
+	if ep.Name != "" {
+		sb.WriteString(fmt.Sprintf("  ├ <b>Title:</b> <i>%s</i>\n", html.EscapeString(ep.Name)))
+	}
+	sb.WriteString(fmt.Sprintf("  └ <b>Status:</b> <code>%s</code>", html.EscapeString(ep.Tracking)))
+
+	markup := &schema.InlineKeyboardMarkup{
+		InlineKeyboard: [][]schema.InlineKeyboardButton{
+			{
+				{Text: "🔍 Search Episode Now", CallbackData: fmt.Sprintf("se:%d", ep.ID)},
+			},
+			{
+				{Text: "⏭️ Mark as Skipped", CallbackData: fmt.Sprintf("wt_sk:%d:%d", ep.ID, returnPage)},
+			},
+			{
+				{Text: "📺 Open Show Control", CallbackData: fmt.Sprintf("sh_ctl:%d:0", ep.ShowID)},
+			},
+			{
+				{Text: "← Back to Wanted", CallbackData: fmt.Sprintf("wt_pg:%d", returnPage)},
+			},
+		},
+	}
+
+	sendOrEditBotMessage(client, token, chatID, sb.String(), markup, editMsgID...)
 }
 
 func handleSearchCommand(
@@ -843,7 +942,74 @@ func handleBotCallback(
 
 	case data == "cmd:wanted":
 		_ = client.AnswerCallbackQuery(token, cb.ID, "Loading wanted episodes...")
-		sendWantedEpisodes(client, token, chatID, db)
+		sendWantedEpisodesPaginated(client, token, chatID, db, 0)
+
+	case strings.HasPrefix(data, "wt_pg:"):
+		page, err := strconv.Atoi(strings.TrimPrefix(data, "wt_pg:"))
+		if err != nil {
+			page = 0
+		}
+		_ = client.AnswerCallbackQuery(token, cb.ID, fmt.Sprintf("Page %d", page+1))
+		var msgID int64
+		if cb.Message != nil {
+			msgID = cb.Message.MessageID
+		}
+		sendWantedEpisodesPaginated(client, token, chatID, db, page, msgID)
+
+	case strings.HasPrefix(data, "wt_ctl:"):
+		parts := strings.Split(strings.TrimPrefix(data, "wt_ctl:"), ":")
+		if len(parts) < 1 {
+			_ = client.AnswerCallbackQuery(token, cb.ID, "Invalid episode")
+			return
+		}
+		epID, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil || epID <= 0 {
+			_ = client.AnswerCallbackQuery(token, cb.ID, "Invalid episode ID")
+			return
+		}
+		returnPage := 0
+		if len(parts) >= 2 {
+			if p, err := strconv.Atoi(parts[1]); err == nil {
+				returnPage = p
+			}
+		}
+		_ = client.AnswerCallbackQuery(token, cb.ID, "🎛️ Episode Control")
+		var msgID int64
+		if cb.Message != nil {
+			msgID = cb.Message.MessageID
+		}
+		sendWantedEpisodeControlCenter(client, token, chatID, db, epID, returnPage, msgID)
+
+	case strings.HasPrefix(data, "wt_sk:"):
+		parts := strings.Split(strings.TrimPrefix(data, "wt_sk:"), ":")
+		if len(parts) < 1 {
+			_ = client.AnswerCallbackQuery(token, cb.ID, "Invalid episode")
+			return
+		}
+		epID, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil || epID <= 0 {
+			_ = client.AnswerCallbackQuery(token, cb.ID, "Invalid episode ID")
+			return
+		}
+		returnPage := 0
+		if len(parts) >= 2 {
+			if p, err := strconv.Atoi(parts[1]); err == nil {
+				returnPage = p
+			}
+		}
+		epRepo := episodeRepository.NewEpisodeRepository(db)
+		if ep, err := epRepo.GetByID(epID); err == nil {
+			ep.Tracking = episodeModel.TrackingSkipped
+			if err := epRepo.Update(ep); err == nil {
+				episodeEvents.EmitEpisodeTrackingUpdatedEvent(ep.ID, ep.Tracking, "")
+			}
+		}
+		_ = client.AnswerCallbackQuery(token, cb.ID, "⏭️ Episode marked as skipped")
+		var msgID int64
+		if cb.Message != nil {
+			msgID = cb.Message.MessageID
+		}
+		sendWantedEpisodesPaginated(client, token, chatID, db, returnPage, msgID)
 
 	case strings.HasPrefix(data, "se:"):
 		epID, err := strconv.Atoi(strings.TrimPrefix(data, "se:"))
