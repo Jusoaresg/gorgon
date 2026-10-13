@@ -21,6 +21,8 @@ type EpisodeRepositoryInterface interface {
 	ListBySeasonID(seasonId int) ([]model.Episode, error)
 	ListByTracking(trackings ...string) ([]model.Episode, error)
 	ListReleasedByTracking(trackings ...string) ([]model.Episode, error)
+	ListBackfillCandidates(now, recentThreshold, recentCooldown, oldCooldown int64, limit int) ([]model.Episode, error)
+	UpdateLastSearchedAt(id int64, timestamp int64) error
 	Update(episode model.Episode) error
 	UpdateTx(tx *sqlx.Tx, episode model.Episode) error
 }
@@ -272,6 +274,41 @@ func (s *EpisodeRepository) UpdateTx(tx *sqlx.Tx, episode model.Episode) error {
 		return err
 	}
 	return nil
+}
+
+func (s *EpisodeRepository) UpdateLastSearchedAt(id int64, timestamp int64) error {
+	_, err := s.db.Exec("UPDATE episodes SET last_searched_at = ? WHERE id = ?", timestamp, id)
+	return err
+}
+
+// ListBackfillCandidates returns released wanted/missing episodes due for an active search.
+// Recently aired episodes use recentCooldown, while older backlog episodes use oldCooldown.
+func (s *EpisodeRepository) ListBackfillCandidates(now, recentThreshold, recentCooldown, oldCooldown int64, limit int) ([]model.Episode, error) {
+	if limit <= 0 {
+		limit = 25
+	}
+	recentCutoff := now - recentThreshold
+	recentSearchCutoff := now - recentCooldown
+	oldSearchCutoff := now - oldCooldown
+
+	query := `
+	SELECT * FROM episodes
+	WHERE tracking IN ('wanted', 'missing')
+	  AND airstamp > 0
+	  AND airstamp <= ?
+	  AND (
+	    (airstamp >= ? AND last_searched_at <= ?)
+	    OR
+	    (airstamp < ? AND last_searched_at <= ?)
+	  )
+	ORDER BY airstamp DESC, season ASC, number ASC
+	LIMIT ?
+	`
+	var episodes []model.Episode
+	if err := s.db.Select(&episodes, query, now, recentCutoff, recentSearchCutoff, recentCutoff, oldSearchCutoff, limit); err != nil {
+		return nil, err
+	}
+	return episodes, nil
 }
 
 var _ EpisodeRepositoryInterface = (*EpisodeRepository)(nil)
