@@ -221,6 +221,29 @@ func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *servic
 			episode.EmitEpisodeTrackingUpdatedEvent(ep.ID, model.TrackingWanted, "")
 
 			showRepo := showRepository.NewShowRepository(safeDB.Db)
+			go func(epCopy model.Episode, relTitle, relURL, indexerName, blReason string) {
+				tgService, err := telegramService.NewTelegramService(logger)
+				if err != nil {
+					return
+				}
+				showName := ""
+				if s, err := showRepo.GetById(epCopy.ShowID); err == nil {
+					showName = s.Name
+				}
+				if err := tgService.SendReleaseBlacklisted(telegramSchema.ReleaseBlacklistedTemplateInput{
+					ShowName:     showName,
+					Season:       epCopy.Season,
+					Episode:      epCopy.Number,
+					EpisodeTitle: epCopy.Name,
+					ReleaseTitle: relTitle,
+					ReleaseURL:   relURL,
+					Indexer:      indexerName,
+					Reason:       blReason,
+				}); err != nil {
+					logger.Error("failed to send telegram blacklist notification", slog.String("error", err.Error()))
+				}
+			}(*ep, releaseTitle, episodeTorrent.InfoUrl, episodeTorrent.Indexer, reason)
+
 			searchSvc := episodeService.NewEpisodeSearchService(
 				safeDB.Db,
 				logger,
@@ -270,6 +293,7 @@ func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *servic
 
 		// Atomic cleanup of prior files/symlinks if this download is an upgrade
 		existingContents, _ := episodeContentRepo.ListByEpisodeId(ep.ID)
+		wasUpgrade := len(existingContents) > 0
 		downloadFolder, _ := paths.GetTorrentDownloadFolder()
 		for _, ec := range existingContents {
 			isSameFile := false
@@ -336,6 +360,9 @@ func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *servic
 				Season:       ep.Season,
 				Episode:      ep.Number,
 				EpisodeTitle: ep.Name,
+				IsUpgrade:    wasUpgrade,
+				Score:        episodeTorrent.Score,
+				ReleaseTitle: episodeTorrent.Title,
 			}); err != nil {
 				logger.Error("failed to send telegram episode downloaded notification", slog.String("error", err.Error()))
 			}

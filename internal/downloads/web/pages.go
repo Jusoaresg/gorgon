@@ -17,6 +17,8 @@ import (
 	epContentModel "github.com/jusoaresg/gorgon/internal/episode_content/model"
 	epContentRepository "github.com/jusoaresg/gorgon/internal/episode_content/repository"
 	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
+	telegramSchema "github.com/jusoaresg/gorgon/external/telegram/schema"
+	telegramService "github.com/jusoaresg/gorgon/external/telegram/service"
 	"github.com/jusoaresg/gorgon/pkg/schemas"
 	"github.com/jusoaresg/gorgon/utils"
 	"github.com/jusoaresg/gorgon/views"
@@ -219,6 +221,27 @@ func (h *Handler) BlacklistDownload(c echo.Context) error {
 			}
 
 			showRepo := showRepository.NewShowRepository(h.DB)
+			go func(epCopy episodeModel.Episode, epTorrTitle, epTorrURL, epTorrIndexer string) {
+				tgSvc, err := telegramService.NewTelegramService(logger)
+				if err != nil {
+					return
+				}
+				showName := ""
+				if s, err := showRepo.GetById(epCopy.ShowID); err == nil {
+					showName = s.Name
+				}
+				_ = tgSvc.SendReleaseBlacklisted(telegramSchema.ReleaseBlacklistedTemplateInput{
+					ShowName:     showName,
+					Season:       epCopy.Season,
+					Episode:      epCopy.Number,
+					EpisodeTitle: epCopy.Name,
+					ReleaseTitle: epTorrTitle,
+					ReleaseURL:   epTorrURL,
+					Indexer:      epTorrIndexer,
+					Reason:       "manual blacklist",
+				})
+			}(episode, episodeTorrent.Title, episodeTorrent.InfoUrl, episodeTorrent.Indexer)
+
 			searchSvc := episodeService.NewEpisodeSearchService(
 				h.DB,
 				logger,
