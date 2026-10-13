@@ -105,6 +105,23 @@ func (s *TelegramService) EditMessageReplyMarkup(token, chatID string, messageID
 	return err
 }
 
+func (s *TelegramService) EditMessageText(token, chatID string, messageID int64, message string, replyMarkup *schema.InlineKeyboardMarkup) error {
+	if token == "" || chatID == "" || messageID == 0 {
+		return nil
+	}
+	_, err := s.ApiService.Post(fmt.Sprintf("bot%s/editMessageText", token), schema.EditMessageTextRequest{
+		ChatID:    chatID,
+		MessageID: messageID,
+		Text:      message,
+		ParseMode: "HTML",
+		LinkPreviewOptions: &schema.LinkPreviewOptions{
+			IsDisabled: true,
+		},
+		ReplyMarkup: replyMarkup,
+	}, nil, nil)
+	return err
+}
+
 func BuildSnatchedDefaultMarkup(releaseURL string, episodeID int64) *schema.InlineKeyboardMarkup {
 	var row []schema.InlineKeyboardButton
 	if releaseURL != "" && (strings.HasPrefix(releaseURL, "http://") || strings.HasPrefix(releaseURL, "https://")) {

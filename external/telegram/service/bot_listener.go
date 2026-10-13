@@ -292,7 +292,16 @@ func sendRemoteMenu(client *TelegramService, token, chatID string) {
 	_ = client.SendMessageWithMarkup(token, chatID, welcome, markup)
 }
 
-func sendDownloadsStatus(client *TelegramService, token, chatID string, db *sqlx.DB, logger *slog.Logger) {
+func sendOrEditBotMessage(client *TelegramService, token, chatID string, text string, markup *schema.InlineKeyboardMarkup, editMsgID ...int64) {
+	if len(editMsgID) > 0 && editMsgID[0] > 0 {
+		if err := client.EditMessageText(token, chatID, editMsgID[0], text, markup); err == nil {
+			return
+		}
+	}
+	_ = client.SendMessageWithMarkup(token, chatID, text, markup)
+}
+
+func sendDownloadsStatus(client *TelegramService, token, chatID string, db *sqlx.DB, logger *slog.Logger, editMsgID ...int64) {
 	qbit, err := qbittorrentService.NewQBittorrentService(logger)
 	if err != nil {
 		_ = client.SendMessage(token, chatID, "⚠️ <b>qBittorrent not configured or unreachable.</b>")
@@ -313,7 +322,7 @@ func sendDownloadsStatus(client *TelegramService, token, chatID string, db *sqlx
 				{{Text: "🔄 Refresh", CallbackData: "cmd:downloads"}},
 			},
 		}
-		_ = client.SendMessageWithMarkup(token, chatID, "📥 <b>Active Downloads</b>\n\n<i>No active transfers in qBittorrent.</i>", markup)
+		sendOrEditBotMessage(client, token, chatID, "📥 <b>Active Downloads</b>\n\n<i>No active transfers in qBittorrent.</i>", markup, editMsgID...)
 		return
 	}
 
@@ -336,34 +345,43 @@ func sendDownloadsStatus(client *TelegramService, token, chatID string, db *sqlx
 		if item.Episode != nil {
 			epCode := fmt.Sprintf("S%02dE%02d", item.Episode.Season, item.Episode.Number)
 			label = fmt.Sprintf("%s — %s", html.EscapeString(item.Episode.ShowName), epCode)
-			shortLabel = fmt.Sprintf("%s %s", item.Episode.ShowName, epCode)
+			shortLabel = fmt.Sprintf("%s — %s", item.Episode.ShowName, epCode)
 		}
-		if len(shortLabel) > 18 {
-			shortLabel = shortLabel[:18]
+		if len(shortLabel) > 30 {
+			shortLabel = shortLabel[:30] + "…"
 		}
 
-		sb.WriteString(fmt.Sprintf("🎬 <b>%s</b>\n", label))
-		sb.WriteString(fmt.Sprintf("  ├ <b>Progress:</b> <code>%d%%</code> (%s)\n", pct, html.EscapeString(item.Torrent.State)))
+		totalSize := item.Torrent.Size
+		downloadedBytes := totalSize - item.Torrent.AmountLeft
+		if item.Torrent.AmountLeft <= 0 && item.Torrent.Progress > 0 && item.Torrent.Progress < 1 {
+			downloadedBytes = int64(float64(totalSize) * float64(item.Torrent.Progress))
+		}
+		if downloadedBytes < 0 {
+			downloadedBytes = 0
+		}
+		sizeInfo := ""
+		if totalSize > 0 {
+			sizeInfo = fmt.Sprintf(" (<code>%s / %s</code>)", formatBotBytes(downloadedBytes), formatBotBytes(totalSize))
+		}
+
+		sb.WriteString(fmt.Sprintf("<b>#%d</b> 🎬 <b>%s</b>\n", i+1, label))
+		sb.WriteString(fmt.Sprintf("  ├ <b>Progress:</b> <code>%d%%</code>%s • %s\n", pct, sizeInfo, html.EscapeString(item.Torrent.State)))
 		sb.WriteString(fmt.Sprintf("  └ <b>Speed:</b> <code>%s/s</code> • <b>Seeds:</b> %d\n\n", formatBotBytes(int64(item.Torrent.DlSpeed)), item.Torrent.NumSeeds))
 
 		hash := strings.ToLower(strings.TrimSpace(item.Torrent.Hash))
 		if len(hash) == 40 {
 			isPaused := strings.Contains(strings.ToLower(item.Torrent.State), "pause") || strings.Contains(strings.ToLower(item.Torrent.State), "stop")
-			toggleBtn := schema.InlineKeyboardButton{
-				Text:         fmt.Sprintf("⏸️ %s", shortLabel),
-				CallbackData: "q_pa:" + hash,
-			}
+			btnIcon := "⚙️"
 			if isPaused {
-				toggleBtn = schema.InlineKeyboardButton{
-					Text:         fmt.Sprintf("▶️ %s", shortLabel),
-					CallbackData: "q_re:" + hash,
-				}
+				btnIcon = "⏸️"
 			}
-			row := []schema.InlineKeyboardButton{
-				toggleBtn,
-				{Text: fmt.Sprintf("⚙️ Options (%s)", shortLabel), CallbackData: "dl_opt:" + hash},
-			}
-			rows = append(rows, row)
+			// Single full-width button per download so the series name and episode are clearly readable
+			rows = append(rows, []schema.InlineKeyboardButton{
+				{
+					Text:         fmt.Sprintf("%s #%d • %s (%d%%)", btnIcon, i+1, shortLabel, pct),
+					CallbackData: "dl_opt:" + hash,
+				},
+			})
 		}
 	}
 
@@ -371,7 +389,7 @@ func sendDownloadsStatus(client *TelegramService, token, chatID string, db *sqlx
 		{Text: "🔄 Refresh Downloads", CallbackData: "cmd:downloads"},
 	})
 
-	_ = client.SendMessageWithMarkup(token, chatID, strings.TrimSpace(sb.String()), &schema.InlineKeyboardMarkup{InlineKeyboard: rows})
+	sendOrEditBotMessage(client, token, chatID, strings.TrimSpace(sb.String()), &schema.InlineKeyboardMarkup{InlineKeyboard: rows}, editMsgID...)
 }
 
 func sendShowsList(client *TelegramService, token, chatID string, db *sqlx.DB, filterQuery string) {
@@ -597,7 +615,11 @@ func handleBotCallback(
 
 	case data == "cmd:downloads":
 		_ = client.AnswerCallbackQuery(token, cb.ID, "Refreshing downloads...")
-		sendDownloadsStatus(client, token, chatID, db, logger)
+		var msgID int64
+		if cb.Message != nil {
+			msgID = cb.Message.MessageID
+		}
+		sendDownloadsStatus(client, token, chatID, db, logger, msgID)
 
 	case data == "cmd:shows":
 		_ = client.AnswerCallbackQuery(token, cb.ID, "Loading library shows...")
@@ -814,7 +836,11 @@ func handleBotCallback(
 			return
 		}
 		_ = client.AnswerCallbackQuery(token, cb.ID, "⏸️ Torrent paused")
-		sendDownloadsStatus(client, token, chatID, db, logger)
+		var msgID int64
+		if cb.Message != nil {
+			msgID = cb.Message.MessageID
+		}
+		sendDownloadsStatus(client, token, chatID, db, logger, msgID)
 
 	case strings.HasPrefix(data, "q_re:"):
 		hash := strings.TrimPrefix(data, "q_re:")
@@ -824,12 +850,20 @@ func handleBotCallback(
 			return
 		}
 		_ = client.AnswerCallbackQuery(token, cb.ID, "▶️ Torrent resumed")
-		sendDownloadsStatus(client, token, chatID, db, logger)
+		var msgID int64
+		if cb.Message != nil {
+			msgID = cb.Message.MessageID
+		}
+		sendDownloadsStatus(client, token, chatID, db, logger, msgID)
 
 	case strings.HasPrefix(data, "q_rm:"):
 		hash := strings.TrimPrefix(data, "q_rm:")
 		_ = client.AnswerCallbackQuery(token, cb.ID, "❌ Removing download...")
-		removeDownloadFromBot(client, token, chatID, db, hash, logger)
+		var msgID int64
+		if cb.Message != nil {
+			msgID = cb.Message.MessageID
+		}
+		removeDownloadFromBot(client, token, chatID, db, hash, logger, msgID)
 
 	case strings.HasPrefix(data, "q_bl:"):
 		hash := strings.TrimPrefix(data, "q_bl:")
@@ -935,6 +969,7 @@ func removeDownloadFromBot(
 	db *sqlx.DB,
 	hash string,
 	logger *slog.Logger,
+	editMsgID ...int64,
 ) {
 	if qbit, err := qbittorrentService.NewQBittorrentService(logger); err == nil {
 		_ = qbit.DeleteTorrent(hash, true)
@@ -967,7 +1002,7 @@ func removeDownloadFromBot(
 		}
 	}
 
-	sendDownloadsStatus(client, token, chatID, db, logger)
+	sendDownloadsStatus(client, token, chatID, db, logger, editMsgID...)
 }
 
 func addShowFromBot(
