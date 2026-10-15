@@ -52,6 +52,9 @@ func VerifyEpisodeWasDeletedWithDB(db *sqlx.DB) {
 		}
 
 		show, _ := showRepo.GetById(episode.ShowID)
+		if show.Name != "" && configFile.ShowsFolder != "" {
+			_ = utils.MigrateShowFolder(configFile.ShowsFolder, show.Name, show.Name)
+		}
 
 		for _, episode_content := range contents {
 			destExists := false

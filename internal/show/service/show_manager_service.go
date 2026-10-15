@@ -253,7 +253,7 @@ func (sm *ShowManagerService) UpdateShowWithRelations(
 				continue
 			}
 
-			if existing.Tracking == episodeModel.TrackingDownloaded && (oldShowName != showModel.Name || oldEpSnapshot.Name != existing.Name) {
+			if existing.Tracking == episodeModel.TrackingDownloaded {
 				downloadedDiffs = append(downloadedDiffs, downloadedEpisodeDiff{
 					oldEp: oldEpSnapshot,
 					newEp: *existing,
@@ -321,7 +321,7 @@ func (sm *ShowManagerService) UpdateShowWithRelations(
 					slog.Int("number", e.Number),
 					slog.String("tracking", e.Tracking),
 				)
-				if e.Tracking == episodeModel.TrackingDownloaded && oldShowName != showModel.Name {
+				if e.Tracking == episodeModel.TrackingDownloaded {
 					downloadedDiffs = append(downloadedDiffs, downloadedEpisodeDiff{
 						oldEp: e,
 						newEp: e,
@@ -351,23 +351,17 @@ func (sm *ShowManagerService) syncShowAndEpisodeFiles(
 	newShowName string,
 	diffs []downloadedEpisodeDiff,
 ) {
-	if oldShowName == newShowName && len(diffs) == 0 {
-		return
-	}
-
 	cfg, err := config.LoadConfig()
 	if err != nil || cfg == nil || cfg.ShowsFolder == "" {
 		return
 	}
 
-	if oldShowName != newShowName {
-		if err := utils.MigrateShowFolder(cfg.ShowsFolder, oldShowName, newShowName); err != nil {
-			sm.logger.Warn("failed to migrate show folder on rename",
-				slog.String("old_show", oldShowName),
-				slog.String("new_show", newShowName),
-				slog.String("error", err.Error()),
-			)
-		}
+	if err := utils.MigrateShowFolder(cfg.ShowsFolder, oldShowName, newShowName); err != nil {
+		sm.logger.Warn("failed to migrate show folder on update",
+			slog.String("old_show", oldShowName),
+			slog.String("new_show", newShowName),
+			slog.String("error", err.Error()),
+		)
 	}
 
 	for _, diff := range diffs {

@@ -9,6 +9,10 @@ import (
 
 func StartVerifyEpisodeWasDeleted(ctx context.Context, callback func()) {
 	logger := config.GetLogger().WithGroup("cron").With("name", "StartVerifyEpisodeWasDeleted")
+	if callback != nil {
+		callback()
+	}
+
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
