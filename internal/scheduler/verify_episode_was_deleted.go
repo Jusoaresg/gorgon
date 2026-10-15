@@ -51,15 +51,37 @@ func VerifyEpisodeWasDeletedWithDB(db *sqlx.DB) {
 			continue
 		}
 
-		show, err := showRepo.GetById(episode.ShowID)
+		show, _ := showRepo.GetById(episode.ShowID)
 
 		for _, episode_content := range contents {
+			destExists := false
+			if show.Name != "" && configFile.ShowsFolder != "" {
+				reconciledPath, recErr := utils.ReconcileEpisodeLink(
+					configFile.ShowsFolder,
+					configFile.QBittorrentDownloadFolder,
+					show.Name,
+					show.Name,
+					episode,
+					episode,
+					episode_content,
+					configFile.LinkMode,
+				)
+				if recErr == nil && reconciledPath != "" {
+					if episode_content.FilePath != reconciledPath {
+						episode_content.FilePath = reconciledPath
+						_ = episodeContentRepo.Update(episode_content)
+					}
+					if _, statErr := os.Stat(reconciledPath); statErr == nil {
+						destExists = true
+					}
+				}
+			}
 
 			fileFolder := filepath.Join(configFile.QBittorrentDownloadFolder, episode_content.Name)
 			filePath, _ := filepath.Abs(fileFolder)
+			_, downloadStatErr := os.Stat(filePath)
 
-			_, err := os.Stat(filePath)
-			if os.IsNotExist(err) {
+			if !destExists && os.IsNotExist(downloadStatErr) {
 				episode.SetNotInstalled()
 
 				err := episodeRepo.Update(episode)
@@ -73,9 +95,8 @@ func VerifyEpisodeWasDeletedWithDB(db *sqlx.DB) {
 					_ = utils.CleanBrokenSymlinksInSeason(configFile.ShowsFolder, show.Name, episode.Season)
 				}
 
-				episodeContentRepo.DeleteById(episode_content.ID)
-
-				episodeTorrentRepo.DeleteByEpisodeID(episode.ID)
+				_ = episodeContentRepo.DeleteById(episode_content.ID)
+				_ = episodeTorrentRepo.DeleteByEpisodeID(episode.ID)
 
 				logger.Info(
 					"Episode file not found, setting tracking to skipped",

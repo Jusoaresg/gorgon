@@ -3,6 +3,7 @@ package jobs
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/jusoaresg/gorgon/config"
@@ -320,31 +321,58 @@ func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *servic
 		if err != nil {
 			return err
 		}
-		episodeRepo.UpdateTx(tx, *ep)
+		if err := episodeRepo.UpdateTx(tx, *ep); err != nil {
+			return err
+		}
+
+		var createdLinks []string
 		for _, content := range contents {
-			content.FilePath = torrent.SavePath
+			destPath, err := utils.SymlinkPathForEpisode(cfg.ShowsFolder, show.Name, *ep, content)
+			if err != nil {
+				for _, p := range createdLinks {
+					_ = os.Remove(p)
+				}
+				tx.Rollback()
+				return err
+			}
+			episodeDownloadFile, err := paths.GetEpisodeDownloadFile(content.Name)
+			if err != nil {
+				for _, p := range createdLinks {
+					_ = os.Remove(p)
+				}
+				tx.Rollback()
+				return err
+			}
+
+			if err := utils.CreateMediaLink(episodeDownloadFile, destPath, cfg.LinkMode); err != nil {
+				logger.Error("Failed to create media link",
+					slog.String("mode", cfg.LinkMode),
+					slog.String("from", episodeDownloadFile),
+					slog.String("to", destPath),
+					slog.String("error", err.Error()),
+				)
+				for _, p := range createdLinks {
+					_ = os.Remove(p)
+				}
+				tx.Rollback()
+				return err
+			}
+			createdLinks = append(createdLinks, destPath)
+
+			content.FilePath = destPath
 			content.EpisodeId = ep.ID
 			if _, err := episodeContentRepo.CreateTx(tx, content); err != nil {
+				for _, p := range createdLinks {
+					_ = os.Remove(p)
+				}
 				return err
-			}
-
-			symlinkPath, err := utils.SymlinkPathForEpisode(cfg.ShowsFolder, show.Name, *ep, content)
-			if err != nil {
-				tx.Rollback()
-				return err
-			}
-			episodeDownloadFolder, err := paths.GetEpisodeDownloadFile(content.Name)
-			if err != nil {
-				tx.Rollback()
-				return err
-			}
-
-			if err := utils.CreateSymlink(episodeDownloadFolder, symlinkPath); err != nil {
-				logger.Error("Failed to create symlink", slog.String("from", episodeDownloadFolder), slog.String("to", symlinkPath), slog.String("error", err.Error()))
 			}
 		}
 
 		if err := tx.Commit(); err != nil {
+			for _, p := range createdLinks {
+				_ = os.Remove(p)
+			}
 			return err
 		}
 
