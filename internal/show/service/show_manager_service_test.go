@@ -4,18 +4,27 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/jusoaresg/gorgon/config"
+	configRepo "github.com/jusoaresg/gorgon/internal/config/repository"
+	configService "github.com/jusoaresg/gorgon/internal/config/service"
 	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
 	episodeRepository "github.com/jusoaresg/gorgon/internal/episode/repository"
+	epContentModel "github.com/jusoaresg/gorgon/internal/episode_content/model"
+	epContentRepository "github.com/jusoaresg/gorgon/internal/episode_content/repository"
 	seasonModel "github.com/jusoaresg/gorgon/internal/season/model"
 	seasonRepository "github.com/jusoaresg/gorgon/internal/season/repository"
 	showModel "github.com/jusoaresg/gorgon/internal/show/model"
 	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
 	showAliasModel "github.com/jusoaresg/gorgon/internal/show_aliases/model"
 	showAliasRepository "github.com/jusoaresg/gorgon/internal/show_aliases/repository"
+	"github.com/jusoaresg/gorgon/pkg/schemas"
 	"github.com/jusoaresg/gorgon/pkg/schemas/dtos"
 	"github.com/jusoaresg/gorgon/testutils"
+	"github.com/jusoaresg/gorgon/utils"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
@@ -270,4 +279,76 @@ func TestUpdateShowWithRelations_DeletedEpisode_PreservedWhenSnatchedOrDownloade
 			assert.Equal(t, 1, count, "episode with tracking %s must NOT be deleted even if removed from TVmaze", tracking)
 		})
 	}
+}
+
+func TestUpdateShowWithRelations_RenamesShowFolderAndDownloadedEpisodeFiles(t *testing.T) {
+	fx := setupUpdateShowTest(t)
+
+	tempDir := t.TempDir()
+	showsDir := filepath.Join(tempDir, "shows")
+	downloadsDir := filepath.Join(tempDir, "downloads")
+	require.NoError(t, os.MkdirAll(downloadsDir, 0755))
+
+	oldCfgSvc := config.GetConfigService()
+	defer config.SetConfigService(oldCfgSvc)
+
+	appCfgRepo := configRepo.NewAppConfigRepository(fx.db, false)
+	cfgSvc, err := configService.NewConfigService(appCfgRepo, slog.Default())
+	require.NoError(t, err)
+	linkMode := utils.LinkModeHardlink
+	_, err = cfgSvc.Update(&schemas.UpdateConfigInput{
+		ShowsFolder:               &showsDir,
+		QBittorrentDownloadFolder: &downloadsDir,
+		LinkMode:                  &linkMode,
+	})
+	require.NoError(t, err)
+	config.SetConfigService(cfgSvc)
+
+	// Mark S01E01 as downloaded and create its initial file on disk under "Old Name" and "Old Episode Name"
+	var ep episodeModel.Episode
+	err = fx.db.Get(&ep, `SELECT * FROM episodes WHERE show_id = ? AND season = 1 AND number = 1`, fx.showID)
+	require.NoError(t, err)
+	ep.Tracking = episodeModel.TrackingDownloaded
+	require.NoError(t, episodeRepository.NewEpisodeRepository(fx.db).Update(ep))
+
+	downloadFile := filepath.Join(downloadsDir, "Old.Name.S01E01.1080p.mkv")
+	require.NoError(t, os.WriteFile(downloadFile, []byte("episode video data"), 0644))
+
+	contentRepo := epContentRepository.NewEpisodeContentRepository(fx.db)
+	content := epContentModel.EpisodeContent{
+		EpisodeId: ep.ID,
+		Name:      "Old.Name.S01E01.1080p.mkv",
+		Size:      1024,
+	}
+	oldDestPath, err := utils.SymlinkPathForEpisode(showsDir, "Old Name", ep, content)
+	require.NoError(t, err)
+	require.NoError(t, utils.CreateMediaLink(downloadFile, oldDestPath, utils.LinkModeHardlink))
+	content.FilePath = oldDestPath
+	contentID, err := contentRepo.Create(content)
+	require.NoError(t, err)
+
+	// Update show name ("Old Name" -> "Renamed Show") and episode name ("Old Episode Name" -> "Pilot Final")
+	showDTO := buildUpdateShowDTO(t, "Renamed Show", `[]`)
+	seasonsDTO := []dtos.SeasonDto{{Number: 1}, {Number: 2}}
+	episodesDTO := []dtos.EpisodeDto{
+		{Name: "Pilot Final", Season: 1, Number: 1, Type: "scripted", AirStamp: "2024-03-01T00:00:00Z", Summary: "<p>updated</p>"},
+	}
+
+	err = fx.svc.UpdateShowWithRelations(showDTO, seasonsDTO, episodesDTO)
+	require.NoError(t, err)
+
+	// Old show folder must be removed
+	_, err = os.Stat(filepath.Join(showsDir, "Old Name"))
+	assert.True(t, os.IsNotExist(err), "old show folder should have been migrated")
+
+	// New episode file must exist under the new show folder and new episode filename
+	expectedNewPath := filepath.Join(showsDir, "Renamed Show", "Season 1", "Renamed Show - S1E1 - Pilot Final.mkv")
+	info, err := os.Lstat(expectedNewPath)
+	require.NoError(t, err)
+	assert.True(t, info.Mode().IsRegular())
+
+	// Database episode_contents.file_path must reflect the new path
+	updatedContent, err := contentRepo.GetById(contentID)
+	require.NoError(t, err)
+	assert.Equal(t, expectedNewPath, updatedContent.FilePath)
 }

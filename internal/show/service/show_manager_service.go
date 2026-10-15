@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/jusoaresg/gorgon/config"
 	"github.com/jusoaresg/gorgon/external/tvmaze/service"
 	"github.com/jusoaresg/gorgon/internal/episode/model"
 	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
 	episodeRepository "github.com/jusoaresg/gorgon/internal/episode/repository"
+	epContentRepository "github.com/jusoaresg/gorgon/internal/episode_content/repository"
 	episodeTorrentRepository "github.com/jusoaresg/gorgon/internal/episode_torrent/repository"
 	seasonModel "github.com/jusoaresg/gorgon/internal/season/model"
 	seasonRepository "github.com/jusoaresg/gorgon/internal/season/repository"
@@ -22,14 +24,15 @@ import (
 )
 
 type ShowManagerService struct {
-	ShowAggregator ShowAggregatorService
-	ShowRepo       showRepository.ShowRepositoryInterface
-	ShowAliasRepo  showAliasRepository.ShowAliasesRepositoryInterface
-	SeasonRepo     seasonRepository.SeasonRepositoryInterface
-	EpisodeRepo    episodeRepository.EpisodeRepositoryInterface
-	tvMaze         *service.TvMazeSearchService
-	DB             *sqlx.DB
-	logger         *slog.Logger
+	ShowAggregator     ShowAggregatorService
+	ShowRepo           showRepository.ShowRepositoryInterface
+	ShowAliasRepo      showAliasRepository.ShowAliasesRepositoryInterface
+	SeasonRepo         seasonRepository.SeasonRepositoryInterface
+	EpisodeRepo        episodeRepository.EpisodeRepositoryInterface
+	EpisodeContentRepo epContentRepository.EpisodeContentRepository
+	tvMaze             *service.TvMazeSearchService
+	DB                 *sqlx.DB
+	logger             *slog.Logger
 }
 
 func NewShowManagerService(logger *slog.Logger, db *sqlx.DB) *ShowManagerService {
@@ -37,6 +40,7 @@ func NewShowManagerService(logger *slog.Logger, db *sqlx.DB) *ShowManagerService
 	showAliasRepo := showAliasRepository.NewShowAliasesRepository(db)
 	seasonRepo := seasonRepository.NewSeasonRepository(db)
 	episodeRepo := episodeRepository.NewEpisodeRepository(db)
+	epContentRepo := epContentRepository.NewEpisodeContentRepository(db)
 	settingsRepo := showSettingsRepository.NewShowSettingsRepository(db)
 
 	return &ShowManagerService{
@@ -48,13 +52,14 @@ func NewShowManagerService(logger *slog.Logger, db *sqlx.DB) *ShowManagerService
 			seasonRepo,
 			&settingsRepo,
 		),
-		ShowRepo:      showRepo,
-		ShowAliasRepo: &showAliasRepo,
-		SeasonRepo:    seasonRepo,
-		EpisodeRepo:   episodeRepo,
-		tvMaze:        service.NewTvMazeSearchService(logger),
-		logger:        logger.WithGroup("showManager"),
-		DB:            db,
+		ShowRepo:           showRepo,
+		ShowAliasRepo:      &showAliasRepo,
+		SeasonRepo:         seasonRepo,
+		EpisodeRepo:        episodeRepo,
+		EpisodeContentRepo: epContentRepo,
+		tvMaze:             service.NewTvMazeSearchService(logger),
+		logger:             logger.WithGroup("showManager"),
+		DB:                 db,
 	}
 }
 
@@ -94,9 +99,12 @@ func (sm *ShowManagerService) UpdateShowWithRelations(
 		return err
 	}
 
+	oldShowName := aggregatedShow.Show.Name
 	showAliasesModel := aggregatedShow.ShowAliases
 	episodesModel := aggregatedShow.Episodes
 	seasonsModel := aggregatedShow.Seasons
+
+	var downloadedDiffs []downloadedEpisodeDiff
 
 	tx, err := sm.DB.Beginx()
 	if err != nil {
@@ -220,6 +228,7 @@ func (sm *ShowManagerService) UpdateShowWithRelations(
 
 		if existing, ok := episodeMap[key]; ok {
 			sm.logger.Info("updating episode", slog.Int64("show_id", showModel.ID), slog.Int("season", episode.Season), slog.String("episode_name", episode.Name))
+			oldEpSnapshot := *existing
 			existing.Name = episode.Name
 			existing.Summary = episode.Summary
 			existing.Type = episode.Type
@@ -242,6 +251,13 @@ func (sm *ShowManagerService) UpdateShowWithRelations(
 					slog.String("error", err.Error()),
 				)
 				continue
+			}
+
+			if existing.Tracking == episodeModel.TrackingDownloaded && (oldShowName != showModel.Name || oldEpSnapshot.Name != existing.Name) {
+				downloadedDiffs = append(downloadedDiffs, downloadedEpisodeDiff{
+					oldEp: oldEpSnapshot,
+					newEp: *existing,
+				})
 			}
 		} else {
 			dtoTime, err := utils.TimeStringToInt64(episode.AirStamp)
@@ -305,6 +321,12 @@ func (sm *ShowManagerService) UpdateShowWithRelations(
 					slog.Int("number", e.Number),
 					slog.String("tracking", e.Tracking),
 				)
+				if e.Tracking == episodeModel.TrackingDownloaded && oldShowName != showModel.Name {
+					downloadedDiffs = append(downloadedDiffs, downloadedEpisodeDiff{
+						oldEp: e,
+						newEp: e,
+					})
+				}
 			}
 		}
 	}
@@ -314,5 +336,69 @@ func (sm *ShowManagerService) UpdateShowWithRelations(
 		return err
 	}
 
+	sm.syncShowAndEpisodeFiles(oldShowName, showModel.Name, downloadedDiffs)
+
 	return nil
+}
+
+type downloadedEpisodeDiff struct {
+	oldEp episodeModel.Episode
+	newEp episodeModel.Episode
+}
+
+func (sm *ShowManagerService) syncShowAndEpisodeFiles(
+	oldShowName string,
+	newShowName string,
+	diffs []downloadedEpisodeDiff,
+) {
+	if oldShowName == newShowName && len(diffs) == 0 {
+		return
+	}
+
+	cfg, err := config.LoadConfig()
+	if err != nil || cfg == nil || cfg.ShowsFolder == "" {
+		return
+	}
+
+	if oldShowName != newShowName {
+		if err := utils.MigrateShowFolder(cfg.ShowsFolder, oldShowName, newShowName); err != nil {
+			sm.logger.Warn("failed to migrate show folder on rename",
+				slog.String("old_show", oldShowName),
+				slog.String("new_show", newShowName),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+
+	for _, diff := range diffs {
+		contents, err := sm.EpisodeContentRepo.ListByEpisodeId(diff.newEp.ID)
+		if err != nil {
+			continue
+		}
+		for _, content := range contents {
+			newPath, err := utils.ReconcileEpisodeLink(
+				cfg.ShowsFolder,
+				cfg.QBittorrentDownloadFolder,
+				oldShowName,
+				newShowName,
+				diff.oldEp,
+				diff.newEp,
+				content,
+				cfg.LinkMode,
+			)
+			if err != nil {
+				sm.logger.Warn("failed to reconcile episode link on update",
+					slog.Int64("episode_id", diff.newEp.ID),
+					slog.String("old_name", diff.oldEp.Name),
+					slog.String("new_name", diff.newEp.Name),
+					slog.String("error", err.Error()),
+				)
+				continue
+			}
+			if newPath != "" && content.FilePath != newPath {
+				content.FilePath = newPath
+				_ = sm.EpisodeContentRepo.Update(content)
+			}
+		}
+	}
 }
