@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
 	epContentModel "github.com/jusoaresg/gorgon/internal/episode_content/model"
@@ -93,13 +94,6 @@ func DeleteSymlink(showsFolder, showName string, episode episodeModel.Episode, e
 		seasonDirs = append(seasonDirs, filepath.Join(showsFolder, showName, fmt.Sprintf("Season %d", episode.Season)))
 	}
 
-	patterns := []string{
-		fmt.Sprintf("S%02dE%02d", episode.Season, episode.Number),
-		fmt.Sprintf("S%dE%d", episode.Season, episode.Number),
-		fmt.Sprintf("S%02dE%d", episode.Season, episode.Number),
-		fmt.Sprintf("S%dE%02d", episode.Season, episode.Number),
-	}
-
 	for _, seasonFolder := range seasonDirs {
 		entries, err := os.ReadDir(seasonFolder)
 		if err != nil {
@@ -113,14 +107,7 @@ func DeleteSymlink(showsFolder, showName string, episode episodeModel.Episode, e
 				continue
 			}
 
-			shouldRemove := false
-			upperName := strings.ToUpper(entry.Name())
-			for _, pat := range patterns {
-				if strings.Contains(upperName, pat) {
-					shouldRemove = true
-					break
-				}
-			}
+			shouldRemove := MatchesEpisodeCode(entry.Name(), episode.Season, episode.Number)
 
 			if !shouldRemove && episodeContent.Name != "" && info.Mode()&os.ModeSymlink != 0 {
 				target, err := os.Readlink(entryPath)
@@ -172,35 +159,94 @@ func CleanBrokenSymlinksInSeason(showsFolder, showName string, season int) error
 	return nil
 }
 
+// MatchesEpisodeCode checks whether filename contains an exact SxxExx / SxEx token
+// for season and number, preventing S1E1 from matching S1E10-S1E19.
+func MatchesEpisodeCode(filename string, season, number int) bool {
+	upper := strings.ToUpper(filename)
+	patterns := []string{
+		fmt.Sprintf("S%02dE%02d", season, number),
+		fmt.Sprintf("S%dE%d", season, number),
+		fmt.Sprintf("S%02dE%d", season, number),
+		fmt.Sprintf("S%dE%02d", season, number),
+	}
+
+	for _, pat := range patterns {
+		searchFrom := 0
+		for {
+			idx := strings.Index(upper[searchFrom:], pat)
+			if idx == -1 {
+				break
+			}
+			absIdx := searchFrom + idx
+			endIdx := absIdx + len(pat)
+
+			// Preceding char must not be alphanumeric
+			prevOk := absIdx == 0 || !isAlphaNumByte(upper[absIdx-1])
+			// Following char must not be a digit (prevents S1E1 matching S1E12)
+			nextOk := endIdx == len(upper) || !isDigitByte(upper[endIdx])
+
+			if prevOk && nextOk {
+				return true
+			}
+			searchFrom = absIdx + 1
+		}
+	}
+	return false
+}
+
+func isDigitByte(b byte) bool {
+	return b >= '0' && b <= '9'
+}
+
+func isAlphaNumByte(b byte) bool {
+	return isDigitByte(b) || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')
+}
+
 // CreateMediaLink creates a hardlink or relative symlink from downloadPath to destPath.
-// It strictly executes the requested mode without silent fallback, returning any OS error directly.
+// It stages the link at a temporary file first and atomically renames it over destPath,
+// ensuring any existing file at destPath is never deleted if link creation fails (e.g. EXDEV).
 func CreateMediaLink(downloadPath, destPath, linkMode string) error {
 	if _, err := os.Stat(downloadPath); err != nil {
 		return err
 	}
 
-	if err := CheckCreateAllFolders(filepath.Dir(destPath)); err != nil {
+	destDir := filepath.Dir(destPath)
+	if err := CheckCreateAllFolders(destDir); err != nil {
 		return err
 	}
 
-	if _, err := os.Lstat(destPath); err == nil {
-		if err := os.Remove(destPath); err != nil {
-			return err
-		}
-	}
+	tmpPath := fmt.Sprintf("%s.gorgon-tmp-%d", destPath, time.Now().UnixNano())
+	_ = os.Remove(tmpPath)
 
+	var createErr error
 	switch linkMode {
-	case "", LinkModeHardlink:
-		return os.Link(downloadPath, destPath)
-	case LinkModeSymlink:
-		relativePath, err := filepath.Rel(filepath.Dir(destPath), downloadPath)
+	case LinkModeHardlink:
+		createErr = os.Link(downloadPath, tmpPath)
+	case "", LinkModeSymlink:
+		relativePath, err := filepath.Rel(destDir, downloadPath)
 		if err != nil {
 			return err
 		}
-		return os.Symlink(relativePath, destPath)
+		createErr = os.Symlink(relativePath, tmpPath)
 	default:
 		return fmt.Errorf("unsupported link mode: %s", linkMode)
 	}
+
+	if createErr != nil {
+		_ = os.Remove(tmpPath)
+		return createErr
+	}
+
+	if err := os.Rename(tmpPath, destPath); err != nil {
+		// On Windows, os.Rename may require removing existing target first
+		_ = os.Remove(destPath)
+		if err2 := os.Rename(tmpPath, destPath); err2 != nil {
+			_ = os.Remove(tmpPath)
+			return err2
+		}
+	}
+
+	return nil
 }
 
 func CreateHardlink(downloadPath, destPath string) error {
@@ -237,6 +283,7 @@ func MigrateShowFolder(showsFolder, oldShowName, newShowName string) error {
 	candidates := []string{
 		filepath.Join(showsFolder, NormalizeFileName(oldShowName)),
 		filepath.Join(showsFolder, oldShowName),
+		filepath.Join(showsFolder, newShowName),
 	}
 
 	var oldDir string
@@ -308,7 +355,7 @@ func ReconcileEpisodeLink(
 	linkMode string,
 ) (string, error) {
 	if linkMode == "" {
-		linkMode = LinkModeHardlink
+		linkMode = LinkModeSymlink
 	}
 
 	newDestPath, err := SymlinkPathForEpisode(showsFolder, newShowName, newEp, content)
@@ -338,33 +385,56 @@ func ReconcileEpisodeLink(
 		}
 	}
 
-	// Fallback: search the season folder for an entry matching SxxExx with the same extension
-	if currentPath == "" {
-		seasonFolder := filepath.Join(showsFolder, NormalizeFileName(newShowName), fmt.Sprintf("Season %d", newEp.Season))
-		if entries, err := os.ReadDir(seasonFolder); err == nil {
-			ext := filepath.Ext(content.Name)
-			patterns := []string{
-				fmt.Sprintf("S%02dE%02d", newEp.Season, newEp.Number),
-				fmt.Sprintf("S%dE%d", newEp.Season, newEp.Number),
+	// Search candidate season folders for existing entries matching the exact SxxExx token
+	seasonDirs := []string{
+		filepath.Join(showsFolder, NormalizeFileName(newShowName), fmt.Sprintf("Season %d", newEp.Season)),
+	}
+	if NormalizeFileName(newShowName) != newShowName {
+		seasonDirs = append(seasonDirs, filepath.Join(showsFolder, newShowName, fmt.Sprintf("Season %d", newEp.Season)))
+	}
+	if oldShowName != "" && oldShowName != newShowName {
+		seasonDirs = append(seasonDirs,
+			filepath.Join(showsFolder, NormalizeFileName(oldShowName), fmt.Sprintf("Season %d", oldEp.Season)),
+			filepath.Join(showsFolder, oldShowName, fmt.Sprintf("Season %d", oldEp.Season)),
+		)
+	}
+
+	ext := filepath.Ext(content.Name)
+	var extraEpisodeEntries []string
+
+	for _, seasonFolder := range seasonDirs {
+		entries, err := os.ReadDir(seasonFolder)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if ext != "" && !strings.EqualFold(filepath.Ext(entry.Name()), ext) {
+				continue
 			}
-			for _, entry := range entries {
-				if ext != "" && !strings.EqualFold(filepath.Ext(entry.Name()), ext) {
-					continue
-				}
-				upper := strings.ToUpper(entry.Name())
-				for _, pat := range patterns {
-					if strings.Contains(upper, pat) {
-						p := filepath.Join(seasonFolder, entry.Name())
-						if info, err := os.Lstat(p); err == nil {
-							currentPath = p
-							currentInfo = info
-							break
-						}
-					}
-				}
-				if currentPath != "" {
-					break
-				}
+			if !MatchesEpisodeCode(entry.Name(), newEp.Season, newEp.Number) {
+				continue
+			}
+			p, err := filepath.Abs(filepath.Join(seasonFolder, entry.Name()))
+			if err != nil {
+				continue
+			}
+			info, err := os.Lstat(p)
+			if err != nil {
+				continue
+			}
+			if currentPath == "" {
+				currentPath = p
+				currentInfo = info
+			} else if p != newDestPath {
+				extraEpisodeEntries = append(extraEpisodeEntries, p)
+			}
+		}
+	}
+
+	cleanupStaleEntries := func() {
+		for _, stale := range extraEpisodeEntries {
+			if stale != newDestPath {
+				_ = os.Remove(stale)
 			}
 		}
 	}
@@ -389,25 +459,29 @@ func ReconcileEpisodeLink(
 				}
 			}
 			if realSource != "" && FileExists(realSource) {
-				if err := CreateMediaLink(realSource, newDestPath, LinkModeHardlink); err != nil {
-					return "", err
+				if err := CreateMediaLink(realSource, newDestPath, LinkModeHardlink); err == nil {
+					if currentPath != newDestPath {
+						_ = os.Remove(currentPath)
+					}
+					cleanupStaleEntries()
+					return newDestPath, nil
 				}
-				if currentPath != newDestPath {
-					_ = os.Remove(currentPath)
-				}
-				return newDestPath, nil
+				// If hardlink failed (e.g. EXDEV across Docker mounts), fall through so the existing symlink is preserved and renamed
 			}
 		}
 
-		// Convert hardlink to symlink if user explicitly switched mode to symlink and source exists
-		if isRegular && linkMode == LinkModeSymlink && sourcePath != "" && FileExists(sourcePath) {
-			if err := CreateMediaLink(sourcePath, newDestPath, LinkModeSymlink); err != nil {
-				return "", err
+		// Convert hardlink to symlink (or refresh broken/moved symlink) if source exists
+		if linkMode == LinkModeSymlink && sourcePath != "" && FileExists(sourcePath) {
+			broken, _ := IsSymlinkBroken(currentPath)
+			if isRegular || broken || currentPath != newDestPath {
+				if err := CreateMediaLink(sourcePath, newDestPath, LinkModeSymlink); err == nil {
+					if currentPath != newDestPath {
+						_ = os.Remove(currentPath)
+					}
+					cleanupStaleEntries()
+					return newDestPath, nil
+				}
 			}
-			if currentPath != newDestPath {
-				_ = os.Remove(currentPath)
-			}
-			return newDestPath, nil
 		}
 
 		// Rename existing hardlink or symlink in-place if path changed
@@ -422,6 +496,7 @@ func ReconcileEpisodeLink(
 				return "", err
 			}
 		}
+		cleanupStaleEntries()
 		return newDestPath, nil
 	}
 
@@ -430,6 +505,7 @@ func ReconcileEpisodeLink(
 		if err := CreateMediaLink(sourcePath, newDestPath, linkMode); err != nil {
 			return "", err
 		}
+		cleanupStaleEntries()
 		return newDestPath, nil
 	}
 

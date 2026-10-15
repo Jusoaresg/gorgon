@@ -233,3 +233,42 @@ func TestSymlinkPathForEpisode_SanitizesShowFolder(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Contains(t, destPath, filepath.Join("Frieren_ Beyond Journey's End_", "Season 1", "Frieren_ Beyond Journey's End_ - S1E1 - Journey's Beginning_ Part 1_.mkv"))
 }
+
+func TestMatchesEpisodeCode_NoPrefixCollisionWithMultiDigitEpisodes(t *testing.T) {
+	assert.True(t, MatchesEpisodeCode("My Show - S1E1 - Pilot.mkv", 1, 1))
+	assert.True(t, MatchesEpisodeCode("My Show - S01E01 - Pilot.mkv", 1, 1))
+	assert.False(t, MatchesEpisodeCode("My Show - S1E10 - Episode 10.mkv", 1, 1))
+	assert.False(t, MatchesEpisodeCode("My Show - S1E12 - Episode 12.mkv", 1, 1))
+	assert.True(t, MatchesEpisodeCode("My Show - S1E12 - Episode 12.mkv", 1, 12))
+}
+
+func TestReconcileEpisodeLink_RenamesDiskTBAWhenDBAlreadyHasNewName(t *testing.T) {
+	tempDir := t.TempDir()
+	downloadDir := filepath.Join(tempDir, "downloads")
+	showsDir := filepath.Join(tempDir, "shows")
+	_ = os.MkdirAll(downloadDir, 0755)
+
+	content := epContentModel.EpisodeContent{Name: "Show.S01E05.mkv"}
+	targetFile := filepath.Join(downloadDir, content.Name)
+	assert.NoError(t, os.WriteFile(targetFile, []byte("video"), 0644))
+
+	// File on disk was created when episode name was "TBA", while S1E10 also exists in the same folder
+	tbaEp := episodeModel.Episode{Season: 1, Number: 5, Name: "TBA"}
+	ep10 := episodeModel.Episode{Season: 1, Number: 10, Name: "Ten"}
+	tbaPath, _ := SymlinkPathForEpisode(showsDir, "My Show", tbaEp, content)
+	ep10Path, _ := SymlinkPathForEpisode(showsDir, "My Show", ep10, epContentModel.EpisodeContent{Name: "Show.S01E10.mkv"})
+	assert.NoError(t, CreateSymlink(targetFile, tbaPath))
+	assert.NoError(t, CreateSymlink(targetFile, ep10Path))
+
+	// Both oldEp and newEp in DB already have "Real Title" from an earlier sync
+	dbEp := episodeModel.Episode{Season: 1, Number: 5, Name: "Real Title"}
+	newDest, err := ReconcileEpisodeLink(showsDir, downloadDir, "My Show", "My Show", dbEp, dbEp, content, LinkModeSymlink)
+	assert.NoError(t, err)
+
+	_, err = os.Lstat(tbaPath)
+	assert.True(t, os.IsNotExist(err), "TBA symlink must be replaced")
+	_, err = os.Lstat(newDest)
+	assert.NoError(t, err, "Renamed symlink must exist")
+	_, err = os.Lstat(ep10Path)
+	assert.NoError(t, err, "Episode 10 must remain untouched")
+}
