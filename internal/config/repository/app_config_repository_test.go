@@ -19,7 +19,7 @@ func TestAppConfigRepository_GetConfig_Default(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, cfg)
 	assert.Equal(t, "/home/user/Videos/shows", cfg.ShowsFolder)
-	assert.Equal(t, "hardlink", cfg.LinkMode)
+	assert.Equal(t, "symlink", cfg.LinkMode)
 	assert.True(t, cfg.TelegramDailySummaryEnabled)
 	assert.Equal(t, "08:00", cfg.TelegramDailySummaryTime)
 }

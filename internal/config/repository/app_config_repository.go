@@ -174,8 +174,8 @@ func (r *AppConfigRepository) GetConfig() (*schemas.ConfigFile, error) {
 
 func (r *AppConfigRepository) SaveConfig(config *schemas.ConfigFile) error {
 	linkMode := config.LinkMode
-	if linkMode != "symlink" {
-		linkMode = "hardlink"
+	if linkMode != "hardlink" {
+		linkMode = "symlink"
 	}
 
 	items := map[string]string{
@@ -262,7 +262,7 @@ func DefaultConfigFile(inDocker bool) schemas.ConfigFile {
 		QBittorrentDownloadFolder:   "downloads",
 		DefaultShowInfoFolder:       "shows",
 		ShowsFolder:                 "/home/user/Videos/shows",
-		LinkMode:                    "hardlink",
+		LinkMode:                    "symlink",
 		TelegramBotApiKey:           "",
 		TelegramChatID:              "",
 		TelegramDailySummaryEnabled: true,

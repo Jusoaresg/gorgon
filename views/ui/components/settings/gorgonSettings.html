@@ -54,11 +54,11 @@
                 <div class="form-group">
                     <label>File Link Mode</label>
                     <select id="linkMode" name="linkMode">
-                        <option value="hardlink" {{ if or (eq .LinkMode "hardlink") (not .LinkMode) }}selected{{ end }}>Hardlink (Default)</option>
-                        <option value="symlink" {{ if eq .LinkMode "symlink" }}selected{{ end }}>Symlink (Symbolic Link)</option>
+                        <option value="symlink" {{ if or (eq .LinkMode "symlink") (not .LinkMode) }}selected{{ end }}>Symlink (Default — Works across separate Docker volumes)</option>
+                        <option value="hardlink" {{ if eq .LinkMode "hardlink" }}selected{{ end }}>Hardlink (Requires unified single mount/filesystem)</option>
                     </select>
                     <small class="text-secondary" style="display: block; margin-top: 0.35rem; font-size: 0.825rem;">
-                        Hardlinks share the same disk inode without duplicating storage and survive torrent deletion. Both folders must reside on the same filesystem/mount.
+                        Use <strong>Symlink</strong> when <code>/downloads</code> and <code>/shows</code> are separate Docker volume mounts. Use <strong>Hardlink</strong> only if both paths share a single unified volume mount.
                     </small>
                 </div>
 
