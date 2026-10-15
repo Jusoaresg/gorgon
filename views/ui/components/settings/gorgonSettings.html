@@ -51,6 +51,17 @@
                     </small>
                 </div>
 
+                <div class="form-group">
+                    <label>File Link Mode</label>
+                    <select id="linkMode" name="linkMode">
+                        <option value="hardlink" {{ if or (eq .LinkMode "hardlink") (not .LinkMode) }}selected{{ end }}>Hardlink (Default)</option>
+                        <option value="symlink" {{ if eq .LinkMode "symlink" }}selected{{ end }}>Symlink (Symbolic Link)</option>
+                    </select>
+                    <small class="text-secondary" style="display: block; margin-top: 0.35rem; font-size: 0.825rem;">
+                        Hardlinks share the same disk inode without duplicating storage and survive torrent deletion. Both folders must reside on the same filesystem/mount.
+                    </small>
+                </div>
+
                 <div class="form-actions">
                     <button class="btn btn-primary" type="submit">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="16" height="16">

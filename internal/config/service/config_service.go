@@ -141,6 +141,9 @@ func (s *ConfigService) MigrateLegacyConfigFile(legacyPath string) error {
 	if legacyConfig.DefaultShowInfoFolder != "" {
 		s.cached.DefaultShowInfoFolder = legacyConfig.DefaultShowInfoFolder
 	}
+	if legacyConfig.LinkMode != "" {
+		s.cached.LinkMode = legacyConfig.LinkMode
+	}
 	if legacyConfig.TelegramBotApiKey != "" {
 		s.cached.TelegramBotApiKey = legacyConfig.TelegramBotApiKey
 	}

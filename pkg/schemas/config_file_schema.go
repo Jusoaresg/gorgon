@@ -18,6 +18,7 @@ type ConfigFile struct {
 
 	DefaultShowInfoFolder string `json:"defaultShowInfoFolder"`
 	ShowsFolder           string `json:"showsFolder"`
+	LinkMode              string `json:"linkMode"`
 	TelegramBotApiKey     string `json:"telegramBotApiKey"`
 	TelegramChatID        string `json:"telegramChatID"`
 
@@ -61,6 +62,7 @@ type UpdateConfigInput struct {
 
 	DefaultShowInfoFolder *string `json:"defaultShowInfoFolder"`
 	ShowsFolder           *string `json:"showsFolder"`
+	LinkMode              *string `json:"linkMode"`
 	TelegramBotApiKey     *string `json:"telegramBotApiKey"`
 	TelegramChatID        *string `json:"telegramChatID"`
 
@@ -102,6 +104,7 @@ func (c *ConfigFile) Apply(input *UpdateConfigInput) {
 
 	setString(&c.DefaultShowInfoFolder, input.DefaultShowInfoFolder)
 	setString(&c.ShowsFolder, input.ShowsFolder)
+	setString(&c.LinkMode, input.LinkMode)
 
 	setString(&c.TelegramBotApiKey, input.TelegramBotApiKey)
 	setString(&c.TelegramChatID, input.TelegramChatID)

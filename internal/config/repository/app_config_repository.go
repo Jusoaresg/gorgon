@@ -18,6 +18,7 @@ const (
 	KeyQBittorrentDownloadFolder   = "qbittorrent.download_folder"
 	KeyStorageShowsFolder          = "storage.shows_folder"
 	KeyStorageDefaultShowInfo      = "storage.default_show_info_folder"
+	KeyStorageLinkMode             = "storage.link_mode"
 	KeyTelegramBotApiKey           = "telegram.bot_api_key"
 	KeyTelegramChatID              = "telegram.chat_id"
 	KeyTelegramDailySummaryEnabled = "telegram.daily_summary_enabled"
@@ -45,6 +46,7 @@ var KeyCategoryMap = map[string]string{
 	KeyQBittorrentDownloadFolder:   CategoryQBittorrent,
 	KeyStorageShowsFolder:          CategoryStorage,
 	KeyStorageDefaultShowInfo:      CategoryStorage,
+	KeyStorageLinkMode:             CategoryStorage,
 	KeyTelegramBotApiKey:           CategoryTelegram,
 	KeyTelegramChatID:              CategoryTelegram,
 	KeyTelegramDailySummaryEnabled: CategoryTelegram,
@@ -145,6 +147,9 @@ func (r *AppConfigRepository) GetConfig() (*schemas.ConfigFile, error) {
 	if val, ok := m[KeyStorageDefaultShowInfo]; ok {
 		cfg.DefaultShowInfoFolder = val
 	}
+	if val, ok := m[KeyStorageLinkMode]; ok && (val == "hardlink" || val == "symlink") {
+		cfg.LinkMode = val
+	}
 	if val, ok := m[KeyTelegramBotApiKey]; ok {
 		cfg.TelegramBotApiKey = val
 	}
@@ -168,6 +173,11 @@ func (r *AppConfigRepository) GetConfig() (*schemas.ConfigFile, error) {
 }
 
 func (r *AppConfigRepository) SaveConfig(config *schemas.ConfigFile) error {
+	linkMode := config.LinkMode
+	if linkMode != "symlink" {
+		linkMode = "hardlink"
+	}
+
 	items := map[string]string{
 		KeyProwlarrApiKey:              config.ProwlarrApiKey,
 		KeyProwlarrHost:                config.ProwlarrHost,
@@ -179,6 +189,7 @@ func (r *AppConfigRepository) SaveConfig(config *schemas.ConfigFile) error {
 		KeyQBittorrentDownloadFolder:   config.QBittorrentDownloadFolder,
 		KeyStorageShowsFolder:          config.ShowsFolder,
 		KeyStorageDefaultShowInfo:      config.DefaultShowInfoFolder,
+		KeyStorageLinkMode:             linkMode,
 		KeyTelegramBotApiKey:           config.TelegramBotApiKey,
 		KeyTelegramChatID:              config.TelegramChatID,
 		KeyTelegramDailySummaryEnabled: strconv.FormatBool(config.TelegramDailySummaryEnabled),
@@ -251,6 +262,7 @@ func DefaultConfigFile(inDocker bool) schemas.ConfigFile {
 		QBittorrentDownloadFolder:   "downloads",
 		DefaultShowInfoFolder:       "shows",
 		ShowsFolder:                 "/home/user/Videos/shows",
+		LinkMode:                    "hardlink",
 		TelegramBotApiKey:           "",
 		TelegramChatID:              "",
 		TelegramDailySummaryEnabled: true,
