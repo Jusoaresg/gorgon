@@ -6,3 +6,5 @@ tmp/*
 *.log
 *.db
 *_templ.go
+
+.worktrees/

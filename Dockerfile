@@ -1,10 +1,22 @@
 # Stage 1: Build the backend
-FROM golang:1.26-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
+
 WORKDIR /app
+
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix netgo -o /app/main .
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /app/main .
+
 
 # Stage 2: Create the final image
 FROM alpine:3.22

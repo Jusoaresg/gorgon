@@ -12,3 +12,8 @@ downloads
 configs
 docs/swagger.yaml
 tmp
+.worktrees
+.context
+*.log
+*.db
+.DS_Store
