@@ -16,6 +16,7 @@ import (
 	episodeService "github.com/jusoaresg/gorgon/internal/episode/service"
 	epContentModel "github.com/jusoaresg/gorgon/internal/episode_content/model"
 	epContentRepository "github.com/jusoaresg/gorgon/internal/episode_content/repository"
+	"github.com/jusoaresg/gorgon/internal/scheduler/jobs"
 	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
 	telegramSchema "github.com/jusoaresg/gorgon/external/telegram/schema"
 	telegramService "github.com/jusoaresg/gorgon/external/telegram/service"
@@ -108,6 +109,48 @@ func (h *Handler) ResumeDownload(c echo.Context) error {
 
 	schemas.SendSuccess(c, "Resume Download", map[string]any{
 		"toastMessage": "Download resumed",
+	})
+	return nil
+}
+
+func (h *Handler) ImportDownload(c echo.Context) error {
+	logger := config.GetLogger()
+
+	hash := c.FormValue("hash")
+	if hash == "" {
+		schemas.SendError(c, 400, "Missing torrent hash")
+		return nil
+	}
+
+	episodeTorrent, err := h.EpisodeTorrentRepo.GetByHash(hash)
+	if err != nil || episodeTorrent.EpisodeId == 0 {
+		logger.Error("no episode torrent found for import", slog.String("hash", hash))
+		schemas.SendError(c, 404, "No tracked episode found for this download")
+		return nil
+	}
+
+	episode, err := h.EpisodeRepo.GetByID(episodeTorrent.EpisodeId)
+	if err != nil {
+		logger.Error("failed to get episode for import", slog.Int64("episode_id", episodeTorrent.EpisodeId), slog.String("error", err.Error()))
+		schemas.SendError(c, 404, "Episode not found")
+		return nil
+	}
+
+	torrentService, err := qbittorrentService.NewQBittorrentService(logger)
+	if err != nil {
+		logger.Error("failed to create qbittorrent service for importing download", slog.String("error", err.Error()))
+		schemas.SendError(c, 500, "Torrent client not available")
+		return nil
+	}
+
+	if err := jobs.ProcessSingleSnatchedDownload(&episode, torrentService); err != nil {
+		logger.Error("failed to process single snatched download manually", slog.String("hash", hash), slog.String("error", err.Error()))
+		schemas.SendError(c, 500, "Failed to import episode")
+		return nil
+	}
+
+	schemas.SendSuccess(c, "Import Download", map[string]any{
+		"toastMessage": "Episode imported successfully",
 	})
 	return nil
 }

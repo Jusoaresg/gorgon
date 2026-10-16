@@ -16,4 +16,5 @@ func RegisterDownloadsRoutes(e *echo.Echo, deps *downloads.Dependencies) {
 	front.POST("downloads/blacklist", handler.BlacklistDownload)
 	front.POST("downloads/pause", handler.PauseDownload)
 	front.POST("downloads/resume", handler.ResumeDownload)
+	front.POST("downloads/import", handler.ImportDownload)
 }

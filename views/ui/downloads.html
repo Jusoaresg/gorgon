@@ -106,6 +106,15 @@
                                 <svg class="download-action-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                             </button>
                             {{ end }}
+                            {{ if and $item.Episode (eq (torrentStateClass $item.Torrent.State) "waiting") }}
+                            <button class="download-action-btn download-action-import" title="Import Episode Now"
+                                    hx-post="/front/downloads/import"
+                                    hx-vals='{"hash": "{{ $item.Torrent.Hash }}"}'
+                                    hx-swap="none"
+                                    hx-on::after-request="showToast(event)">
+                                <svg class="download-action-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                            </button>
+                            {{ end }}
                             {{ if and $item.Episode $item.Episode.InfoUrl }}
                             <a class="download-action-btn" href="{{ $item.Episode.InfoUrl }}" target="_blank" title="View Release">
                                 <svg class="download-action-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>

@@ -216,6 +216,12 @@
     background-color: rgba(16, 185, 129, 0.1);
 }
 
+.download-action-import:hover {
+    border-color: var(--accent-purple);
+    color: var(--accent-purple-light);
+    background-color: rgba(139, 92, 246, 0.15);
+}
+
 .download-action-remove:hover {
     border-color: var(--danger);
     color: var(--danger);
