@@ -107,10 +107,116 @@ func TestRenderDownloadsPage(t *testing.T) {
 		"Waiting to Import",
 		"100%",
 		"hx-trigger=\"every 2s\"",
+		"download-action-import",
+		"title=\"Import Episode Now\"",
+		"hx-post=\"/front/downloads/import\"",
+		"hx-vals='{\"hash\": \"donehash\"}'",
 	} {
 		if !bytes.Contains(buf.Bytes(), []byte(want)) {
 			t.Errorf("rendered output missing %q\n---\n%s", want, out)
 		}
+	}
+}
+
+func TestRenderDownloadsImportButton(t *testing.T) {
+	tmpl := NewTemplate()
+
+	tests := []struct {
+		name        string
+		item        service.DownloadItem
+		shouldExist bool
+	}{
+		{
+			name: "renders when episode exists and state is waiting (uploading)",
+			item: service.DownloadItem{
+				Torrent: schema.CheckTorrentResponse{
+					Hash:  "hash-waiting-uploading",
+					State: "uploading",
+				},
+				Episode: &service.EpisodeInfo{
+					EpisodeID: 10,
+					ShowID:    1,
+					Name:      "Importable Ep",
+				},
+			},
+			shouldExist: true,
+		},
+		{
+			name: "renders when episode exists and state is pausedUP",
+			item: service.DownloadItem{
+				Torrent: schema.CheckTorrentResponse{
+					Hash:  "hash-waiting-pausedup",
+					State: "pausedUP",
+				},
+				Episode: &service.EpisodeInfo{
+					EpisodeID: 11,
+					ShowID:    1,
+					Name:      "Importable Ep 2",
+				},
+			},
+			shouldExist: true,
+		},
+		{
+			name: "does not render when torrent is still downloading",
+			item: service.DownloadItem{
+				Torrent: schema.CheckTorrentResponse{
+					Hash:  "hash-downloading",
+					State: "downloading",
+				},
+				Episode: &service.EpisodeInfo{
+					EpisodeID: 12,
+					ShowID:    1,
+					Name:      "Active Ep",
+				},
+			},
+			shouldExist: false,
+		},
+		{
+			name: "does not render when state is waiting but episode is nil",
+			item: service.DownloadItem{
+				Torrent: schema.CheckTorrentResponse{
+					Hash:  "hash-no-episode",
+					State: "uploading",
+				},
+				Episode: nil,
+			},
+			shouldExist: false,
+		},
+		{
+			name: "does not render when torrent is stalledDL",
+			item: service.DownloadItem{
+				Torrent: schema.CheckTorrentResponse{
+					Hash:  "hash-stalled",
+					State: "stalledDL",
+				},
+				Episode: &service.EpisodeInfo{
+					EpisodeID: 13,
+					ShowID:    1,
+					Name:      "Stalled Ep",
+				},
+			},
+			shouldExist: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := tmpl.templates.ExecuteTemplate(&buf, "download-items", PageData{Data: renderData{Items: []service.DownloadItem{tc.item}}}); err != nil {
+				t.Fatalf("failed to render download-items: %v", err)
+			}
+			out := buf.String()
+			hasImportBtn := strings.Contains(out, "download-action-import") &&
+				strings.Contains(out, "hx-post=\"/front/downloads/import\"") &&
+				strings.Contains(out, tc.item.Torrent.Hash)
+
+			if tc.shouldExist && !hasImportBtn {
+				t.Errorf("expected import button to be rendered for state %q, but was not found in:\n%s", tc.item.Torrent.State, out)
+			}
+			if !tc.shouldExist && hasImportBtn {
+				t.Errorf("expected import button NOT to be rendered for state %q (episode=%v), but found it in:\n%s", tc.item.Torrent.State, tc.item.Episode != nil, out)
+			}
+		})
 	}
 }
 
