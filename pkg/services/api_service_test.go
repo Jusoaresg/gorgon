@@ -92,6 +92,48 @@ func TestAPIService_BuildURL(t *testing.T) {
 	assert.Equal(t, "http://localhost:9696/api/v1/search", svcNoSlash.buildURL("api/v1/search"))
 }
 
+func TestAPIService_BuildURL_SSRFProtection(t *testing.T) {
+	svc := NewAPIService("http://api.tvmaze.com", nil)
+
+	// Protocol-relative URL attempt must not hijack host
+	assert.Equal(t, "http://api.tvmaze.com/attacker.com/evil", svc.buildURL("//attacker.com/evil"))
+
+	// Absolute URL attempt must not override base host or scheme
+	assert.Equal(t, "http://api.tvmaze.com/http://attacker.com/evil", svc.buildURL("http://attacker.com/evil"))
+	assert.Equal(t, "http://api.tvmaze.com/https://attacker.com/evil", svc.buildURL("https://attacker.com/evil"))
+}
+
+func TestAPIService_CheckRedirect(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	t.Run("blocks unsupported redirect scheme", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "file:///etc/passwd", http.StatusFound)
+		}))
+		defer server.Close()
+
+		svc := NewAPIService(server.URL, logger)
+		var resp map[string]any
+		err := svc.Get("/", &resp)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported redirect scheme")
+	})
+
+	t.Run("limits excessive redirects", func(t *testing.T) {
+		var server *httptest.Server
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, server.URL+"/loop", http.StatusFound)
+		}))
+		defer server.Close()
+
+		svc := NewAPIService(server.URL, logger)
+		var resp map[string]any
+		err := svc.Get("/loop", &resp)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "stopped after 10 redirects")
+	})
+}
+
 type sampleResponse struct {
 	Status  string `json:"status"`
 	Count   int    `json:"count"`

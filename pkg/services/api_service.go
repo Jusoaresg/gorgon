@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -77,6 +78,15 @@ func NewAPIService(url string, logger *slog.Logger, opts ...Option) *APIService 
 		Url: url,
 		Client: &http.Client{
 			Timeout: 60 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 10 {
+					return fmt.Errorf("stopped after 10 redirects")
+				}
+				if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+					return fmt.Errorf("unsupported redirect scheme: %s", req.URL.Scheme)
+				}
+				return nil
+			},
 		},
 		Logger:         logger.WithGroup("apiService"),
 		DefaultHeaders: make(map[string]string),
@@ -95,13 +105,36 @@ func (a *APIService) buildURL(endpoint string) string {
 	if endpoint == "" {
 		return base
 	}
+
+	// Prevent protocol-relative URL host hijacking (e.g. "//attacker.com/evil")
+	if strings.HasPrefix(endpoint, "//") {
+		endpoint = "/" + strings.TrimLeft(endpoint, "/")
+	}
+
+	var rawURL string
 	if !strings.HasPrefix(endpoint, "/") && !strings.HasPrefix(endpoint, "?") {
-		return base + "/" + endpoint
+		rawURL = base + "/" + endpoint
+	} else {
+		rawURL = base + endpoint
 	}
-	if strings.HasPrefix(endpoint, "?") {
-		return base + endpoint
+
+	baseURL, err := url.Parse(base)
+	if err != nil {
+		return rawURL
 	}
-	return base + endpoint
+
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+
+	// Enforce that scheme and host strictly match the base URL to prevent request forgery
+	if parsedURL.Host != baseURL.Host || parsedURL.Scheme != baseURL.Scheme {
+		parsedURL.Scheme = baseURL.Scheme
+		parsedURL.Host = baseURL.Host
+	}
+
+	return parsedURL.String()
 }
 
 func decodeResponseBody(body []byte, target any) error {
@@ -149,6 +182,17 @@ func (a *APIService) doRequest(ctx context.Context, method, endpoint string, req
 
 	for k, v := range headers {
 		req.Header.Set(k, v)
+	}
+
+	// SSRF protection guard: verify request host matches configured base host
+	if baseParsed, err := url.Parse(a.Url); err == nil && baseParsed.Host != "" {
+		if req.URL.Host != baseParsed.Host {
+			a.Logger.Error("SSRF attempt detected: request host does not match base URL",
+				slog.String("request_host", req.URL.Host),
+				slog.String("base_host", baseParsed.Host),
+			)
+			return nil, nil, fmt.Errorf("request host %q does not match configured base host %q", req.URL.Host, baseParsed.Host)
+		}
 	}
 
 	resp, err := a.Client.Do(req)
