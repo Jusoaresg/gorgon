@@ -97,8 +97,12 @@ func (p *ProwlarrSearchService) waitAndLock(ctx context.Context) error {
 	if err := p.limiter.Wait(ctx); err != nil {
 		return err
 	}
-	p.semaphore <- struct{}{}
-	return nil
+	select {
+	case p.semaphore <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (p *ProwlarrSearchService) unlock() {
@@ -119,8 +123,8 @@ func (p *ProwlarrSearchService) CheckConnection() error {
 	return nil
 }
 
-func (p *ProwlarrSearchService) Search(request *schema.SearchRequest, model *[]schema.SearchResponse, indexerIds ...int) error {
-	if err := p.waitAndLock(context.Background()); err != nil {
+func (p *ProwlarrSearchService) SearchWithContext(ctx context.Context, request *schema.SearchRequest, model *[]schema.SearchResponse, indexerIds ...int) error {
+	if err := p.waitAndLock(ctx); err != nil {
 		return err
 	}
 	defer p.unlock()
@@ -133,11 +137,15 @@ func (p *ProwlarrSearchService) Search(request *schema.SearchRequest, model *[]s
 		params.Add("indexerIds", strconv.Itoa(indexer))
 	}
 
-	return p.APIService.Get(fmt.Sprintf("/api/v1/search?%s", params.Encode()), &model)
+	return p.APIService.GetContext(ctx, fmt.Sprintf("/api/v1/search?%s", params.Encode()), &model)
 }
 
-func (p *ProwlarrSearchService) SearchByType(request *schema.SearchByTypeRequest, model *[]schema.SearchResponse, indexerIds ...int) error {
-	if err := p.waitAndLock(context.Background()); err != nil {
+func (p *ProwlarrSearchService) Search(request *schema.SearchRequest, model *[]schema.SearchResponse, indexerIds ...int) error {
+	return p.SearchWithContext(context.Background(), request, model, indexerIds...)
+}
+
+func (p *ProwlarrSearchService) SearchByTypeWithContext(ctx context.Context, request *schema.SearchByTypeRequest, model *[]schema.SearchResponse, indexerIds ...int) error {
+	if err := p.waitAndLock(ctx); err != nil {
 		return err
 	}
 	defer p.unlock()
@@ -149,7 +157,11 @@ func (p *ProwlarrSearchService) SearchByType(request *schema.SearchByTypeRequest
 	for _, id := range indexerIds {
 		params.Add("indexerIds", strconv.Itoa(id))
 	}
-	return p.APIService.Get(fmt.Sprintf("/api/v1/search?%s", params.Encode()), &model)
+	return p.APIService.GetContext(ctx, fmt.Sprintf("/api/v1/search?%s", params.Encode()), &model)
+}
+
+func (p *ProwlarrSearchService) SearchByType(request *schema.SearchByTypeRequest, model *[]schema.SearchResponse, indexerIds ...int) error {
+	return p.SearchByTypeWithContext(context.Background(), request, model, indexerIds...)
 }
 
 // FetchRssFeed queries Prowlarr with an empty query to retrieve the latest releases across enabled indexers.
