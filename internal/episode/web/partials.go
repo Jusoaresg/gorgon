@@ -1,11 +1,14 @@
 package web
 
 import (
+	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/jusoaresg/gorgon/config"
 	prowlarrSchema "github.com/jusoaresg/gorgon/external/prowlarr/schema"
@@ -101,30 +104,42 @@ func (h *Handler) SearchEpisodeResults(c echo.Context) error {
 		return err
 	}
 
+	normalizedShowName := utils.NormalizeTitle(show.Name)
+	seenTitles := make(map[string]struct{})
+	seenTitles[strings.ToLower(normalizedShowName)] = struct{}{}
+
 	titles := []aliasProgressItem{
-		{Name: utils.NormalizeTitle(show.Name), Encoded: url.QueryEscape(utils.NormalizeTitle(show.Name))},
+		{Name: normalizedShowName, Encoded: url.QueryEscape(normalizedShowName)},
 	}
 
-	for _, alias := range aliases {
-		if !latinAliasRegex.MatchString(alias.Alias) {
-			continue
-		}
-		titles = append(titles, aliasProgressItem{
-			Name:    alias.Alias,
-			Encoded: url.QueryEscape(alias.Alias),
-		})
-	}
+	var latinAliases []aliasProgressItem
+	var nonLatinAliases []aliasProgressItem
 
 	for _, alias := range aliases {
-		if latinAliasRegex.MatchString(alias.Alias) {
+		norm := strings.TrimSpace(alias.Alias)
+		if norm == "" {
 			continue
 		}
-		titles = append(titles, aliasProgressItem{
-			Name:    alias.Alias,
-			Encoded: url.QueryEscape(alias.Alias),
-			Delay:   " delay:3s",
-		})
+		normKey := strings.ToLower(utils.NormalizeTitle(norm))
+		if _, seen := seenTitles[normKey]; seen {
+			continue
+		}
+		seenTitles[normKey] = struct{}{}
+
+		item := aliasProgressItem{
+			Name:    norm,
+			Encoded: url.QueryEscape(norm),
+		}
+		if latinAliasRegex.MatchString(norm) {
+			latinAliases = append(latinAliases, item)
+		} else {
+			item.Delay = " delay:3s"
+			nonLatinAliases = append(nonLatinAliases, item)
+		}
 	}
+
+	titles = append(titles, latinAliases...)
+	titles = append(titles, nonLatinAliases...)
 
 	return c.Render(http.StatusOK, "search-results-progress", searchProgressData{
 		EpisodeID: epId,
@@ -183,8 +198,12 @@ func (h *Handler) SearchAliasResult(c echo.Context) error {
 	evaluated, err := h.EpisodeSearchSvc.Searcher.SearchAliasForEpisode(episode, show, title, h.DB, episodeService.SearchOptions{
 		SkipCooldown: true,
 		StopOnGood:   false,
+		Context:      c.Request().Context(),
 	})
 	if err != nil {
+		if errors.Is(err, context.Canceled) || c.Request().Context().Err() != nil {
+			return c.NoContent(http.StatusNoContent)
+		}
 		logger.Error("error searching alias for episode", slog.String("title", title), slog.String("error", err.Error()))
 		return c.Render(http.StatusOK, "search-alias-results", searchAliasResultsData{
 			Alias:      title,
