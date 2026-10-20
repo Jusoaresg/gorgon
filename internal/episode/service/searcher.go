@@ -1,24 +1,35 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/jusoaresg/gorgon/config"
+	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
 	"github.com/jusoaresg/gorgon/external/prowlarr/schema"
 	"github.com/jusoaresg/gorgon/external/prowlarr/service"
 	"github.com/jusoaresg/gorgon/internal/filter"
 	filterService "github.com/jusoaresg/gorgon/internal/filter/service"
-	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
 	showModel "github.com/jusoaresg/gorgon/internal/show/model"
 	"github.com/jusoaresg/gorgon/utils"
+)
+
+var (
+	indexerCacheMu      sync.RWMutex
+	cachedIndexerIDs    []int
+	cachedIndexerExpiry time.Time
+	indexerCacheTTL     = 5 * time.Minute
 )
 
 type SearchOptions struct {
 	SkipCooldown bool
 	StopOnGood   bool
+	Context      context.Context
 }
 
 type EpisodeSearcherInterface interface {
@@ -32,6 +43,24 @@ type EpisodeSearcherInterface interface {
 type EpisodeSearcher struct{}
 
 func (s *EpisodeSearcher) getEnabledIndexerIDs(logger *slog.Logger) ([]int, error) {
+	indexerCacheMu.RLock()
+	if time.Now().Before(cachedIndexerExpiry) && len(cachedIndexerIDs) > 0 {
+		ids := make([]int, len(cachedIndexerIDs))
+		copy(ids, cachedIndexerIDs)
+		indexerCacheMu.RUnlock()
+		return ids, nil
+	}
+	indexerCacheMu.RUnlock()
+
+	indexerCacheMu.Lock()
+	defer indexerCacheMu.Unlock()
+
+	if time.Now().Before(cachedIndexerExpiry) && len(cachedIndexerIDs) > 0 {
+		ids := make([]int, len(cachedIndexerIDs))
+		copy(ids, cachedIndexerIDs)
+		return ids, nil
+	}
+
 	prowlarrIndexerService := service.NewProwlarrIndexerService(logger)
 	var indexers []schema.IndexerResponse
 	if err := prowlarrIndexerService.GetIndexers(&indexers); err != nil {
@@ -43,7 +72,13 @@ func (s *EpisodeSearcher) getEnabledIndexerIDs(logger *slog.Logger) ([]int, erro
 			indexerIds = append(indexerIds, indexer.Id)
 		}
 	}
-	return indexerIds, nil
+
+	cachedIndexerIDs = indexerIds
+	cachedIndexerExpiry = time.Now().Add(indexerCacheTTL)
+
+	ids := make([]int, len(indexerIds))
+	copy(ids, indexerIds)
+	return ids, nil
 }
 
 func (s *EpisodeSearcher) FetchRssFeed(limit int) ([]schema.SearchResponse, error) {
@@ -129,13 +164,25 @@ func (s *EpisodeSearcher) SearchAliasForEpisode(episode episodeModel.Episode, sh
 		return nil, err
 	}
 
+	searchCtx := opts.Context
+	if searchCtx == nil {
+		searchCtx = context.Background()
+	}
+
 	patterns := filterService.SearchPatterns(profile, settings.ShowType)
 
 	var queries []string
+	seenQueries := make(map[string]struct{})
 	for _, pattern := range patterns {
 		q, err := filter.ExpandQuery(pattern, ctx, alias)
-		if err == nil && strings.TrimSpace(q) != "" {
-			queries = append(queries, q)
+		if err == nil {
+			q = strings.TrimSpace(q)
+			if q != "" {
+				if _, seen := seenQueries[q]; !seen {
+					seenQueries[q] = struct{}{}
+					queries = append(queries, q)
+				}
+			}
 		}
 	}
 	if len(queries) == 0 {
@@ -143,9 +190,7 @@ func (s *EpisodeSearcher) SearchAliasForEpisode(episode episodeModel.Episode, sh
 	}
 
 	const cooldownDuration = 5 * time.Minute
-	seen := make(map[string]struct{})
-	var rawResults []schema.SearchResponse
-
+	var activeQueries []string
 	for _, query := range queries {
 		termKey := strings.ToLower(query)
 		if !opts.SkipCooldown {
@@ -158,32 +203,100 @@ func (s *EpisodeSearcher) SearchAliasForEpisode(episode episodeModel.Episode, sh
 			}
 			config.ProwlarrCooldownCache.Store(termKey, time.Now())
 		}
+		activeQueries = append(activeQueries, query)
+	}
 
+	seen := make(map[string]struct{})
+	var rawResults []schema.SearchResponse
+
+	if len(activeQueries) == 1 {
 		searchKey := schema.SearchByTypeRequest{
-			Query: query,
+			Query: activeQueries[0],
 			Type:  "search",
 		}
-
 		var res []schema.SearchResponse
-		if err := searchService.SearchByType(&searchKey, &res, indexerIds...); err != nil {
-			logger.Error("error searching prowlarr",
-				slog.String("query", query),
-				slog.String("error", err.Error()),
-			)
-			continue
+		if err := searchService.SearchByTypeWithContext(searchCtx, &searchKey, &res, indexerIds...); err != nil {
+			if !errors.Is(err, context.Canceled) {
+				logger.Error("error searching prowlarr",
+					slog.String("query", activeQueries[0]),
+					slog.String("error", err.Error()),
+				)
+			}
+		} else {
+			for _, r := range res {
+				idKey := r.InfoHash
+				if idKey == "" {
+					idKey = r.Guid
+				}
+				if idKey == "" {
+					idKey = r.Filename
+				}
+				if _, exists := seen[idKey]; !exists {
+					seen[idKey] = struct{}{}
+					rawResults = append(rawResults, r)
+				}
+			}
+		}
+	} else if len(activeQueries) > 1 {
+		type queryResult struct {
+			responses []schema.SearchResponse
+			err       error
 		}
 
-		for _, r := range res {
-			idKey := r.InfoHash
-			if idKey == "" {
-				idKey = r.Guid
-			}
-			if idKey == "" {
-				idKey = r.Filename
-			}
-			if _, exists := seen[idKey]; !exists {
-				seen[idKey] = struct{}{}
-				rawResults = append(rawResults, r)
+		resultsChan := make(chan queryResult, len(activeQueries))
+		var wg sync.WaitGroup
+
+		for _, query := range activeQueries {
+			wg.Add(1)
+			go func(q string) {
+				defer wg.Done()
+
+				if searchCtx.Err() != nil {
+					resultsChan <- queryResult{err: searchCtx.Err()}
+					return
+				}
+
+				searchKey := schema.SearchByTypeRequest{
+					Query: q,
+					Type:  "search",
+				}
+
+				var res []schema.SearchResponse
+				if err := searchService.SearchByTypeWithContext(searchCtx, &searchKey, &res, indexerIds...); err != nil {
+					if !errors.Is(err, context.Canceled) {
+						logger.Error("error searching prowlarr",
+							slog.String("query", q),
+							slog.String("error", err.Error()),
+						)
+					}
+					resultsChan <- queryResult{err: err}
+					return
+				}
+
+				resultsChan <- queryResult{responses: res}
+			}(query)
+		}
+
+		wg.Wait()
+		close(resultsChan)
+
+		if searchCtx.Err() != nil {
+			return nil, searchCtx.Err()
+		}
+
+		for qr := range resultsChan {
+			for _, r := range qr.responses {
+				idKey := r.InfoHash
+				if idKey == "" {
+					idKey = r.Guid
+				}
+				if idKey == "" {
+					idKey = r.Filename
+				}
+				if _, exists := seen[idKey]; !exists {
+					seen[idKey] = struct{}{}
+					rawResults = append(rawResults, r)
+				}
 			}
 		}
 	}
