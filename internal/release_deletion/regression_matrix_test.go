@@ -324,3 +324,45 @@ func TestDeletionRegressionConcurrentDuplicatesShareOperation(t *testing.T) {
 	require.Equal(t, a.op.ID, b.op.ID)
 	f.preserved(t)
 }
+
+func TestDeletionRegressionChangedFileMetadataCannotReuseCapturedIdentity(t *testing.T) {
+	f := newMatrixFixture(t, "remaining file")
+	op, err := f.service.Delete(context.Background(), f.request())
+	require.Error(t, err)
+	// Keep the same inode deliberately: a library file replaced in place after
+	// preparation must not be mistaken for the captured release.
+	require.NoError(t, os.WriteFile(f.link, []byte("new unrelated contents"), 0600))
+	require.NoError(t, os.Remove(f.source))
+	resumed, err := f.service.Resume(context.Background(), op.ID)
+	require.ErrorIs(t, err, ErrUnsafe)
+	require.NotEqual(t, "completed", resumed.Status)
+	content, err := os.ReadFile(f.link)
+	require.NoError(t, err)
+	require.Equal(t, "new unrelated contents", string(content))
+	f.preserved(t)
+}
+
+func TestDeletionRegressionSeparateHardlinkSourcesAreIndependent(t *testing.T) {
+	f := newMatrixFixture(t, "success")
+	otherSource := filepath.Join(f.downloads, "independent.mkv")
+	require.NoError(t, os.Link(f.source, otherSource))
+	otherLink := filepath.Join(f.shows, "independent.mkv")
+	require.NoError(t, os.Link(otherSource, otherLink))
+	ep := testutils.MakeFakeEpisode()
+	require.NoError(t, f.db.Get(&ep.ShowID, "SELECT show_id FROM episodes WHERE id=?", f.episodeID))
+	require.NoError(t, f.db.Get(&ep.SeasonID, "SELECT season_id FROM episodes WHERE id=?", f.episodeID))
+	ep.Number = 99
+	ep.Tracking = "downloaded"
+	otherID, err := er.NewEpisodeRepository(f.db).Create(ep)
+	require.NoError(t, err)
+	_, err = f.db.Exec("INSERT INTO episode_torrents (episode_id,hash) VALUES (?,'independent')", otherID)
+	require.NoError(t, err)
+	_, err = f.db.Exec("INSERT INTO episode_contents (episode_id,name,file_path,size) VALUES (?,'independent.mkv',?,5)", otherID, otherLink)
+	require.NoError(t, err)
+	op, err := f.service.Delete(context.Background(), f.request())
+	require.NoError(t, err)
+	require.Equal(t, "completed", op.Status)
+	require.FileExists(t, otherSource)
+	require.FileExists(t, otherLink)
+	require.NoFileExists(t, f.source)
+}
