@@ -11,7 +11,6 @@ import (
 	"github.com/jusoaresg/gorgon/external/qbittorrent/schema"
 	qbittorrentService "github.com/jusoaresg/gorgon/external/qbittorrent/service"
 	"github.com/jusoaresg/gorgon/internal/downloads/service"
-	episodeEvents "github.com/jusoaresg/gorgon/internal/episode/events"
 	"github.com/jusoaresg/gorgon/internal/scheduler/jobs"
 	"github.com/jusoaresg/gorgon/pkg/schemas"
 	"github.com/jusoaresg/gorgon/views"
