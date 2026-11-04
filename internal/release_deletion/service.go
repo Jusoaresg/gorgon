@@ -155,6 +155,40 @@ func (s *Service) prepare(r Request) (Operation, error) {
 	if r.EpisodeID == 0 && r.Hash == "" {
 		return op, ErrUnsafe
 	}
+	r.Hash = strings.ToLower(strings.TrimSpace(r.Hash))
+	if r.EpisodeID == 0 && r.Hash != "" {
+		var ids []int64
+		if err := s.DB.Select(&ids, "SELECT DISTINCT episode_id FROM episode_torrents WHERE hash = ? COLLATE NOCASE", r.Hash); err != nil {
+			return op, err
+		}
+		if len(ids) > 1 {
+			return op, fmt.Errorf("%w: torrent is associated with other episodes", ErrUnsafe)
+		}
+		if len(ids) == 1 {
+			r.EpisodeID = ids[0]
+		} else {
+			// Finalization removes associations. Preserve request identity for retries
+			// after completion or a lost response, without guessing an episode.
+			err := s.DB.Get(&op, "SELECT * FROM release_deletion_operations WHERE target = ? ORDER BY created_at DESC, rowid DESC LIMIT 1", "hash:"+r.Hash)
+			if err == nil {
+				if op.Intention != r.Intention {
+					return op, ErrConflict
+				}
+				if op.Status != "completed" {
+					return op, nil
+				}
+				var torrents []qs.CheckTorrentResponse
+				if err := s.Options.Client.CheckTorrentsWithHash("", r.Hash, &torrents); err != nil {
+					return op, err
+				}
+				if len(torrents) == 0 {
+					return op, nil
+				}
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return op, err
+			}
+		}
+	}
 	var ep em.Episode
 	if r.EpisodeID != 0 {
 		if err := s.DB.Get(&ep, "SELECT * FROM episodes WHERE id = ?", r.EpisodeID); err != nil {

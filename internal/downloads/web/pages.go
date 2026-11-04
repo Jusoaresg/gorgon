@@ -1,27 +1,27 @@
 package web
 
 import (
+	"errors"
+	"github.com/jusoaresg/gorgon/internal/release_deletion"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jusoaresg/gorgon/config"
 	"github.com/jusoaresg/gorgon/external/qbittorrent/schema"
 	qbittorrentService "github.com/jusoaresg/gorgon/external/qbittorrent/service"
+	telegramSchema "github.com/jusoaresg/gorgon/external/telegram/schema"
+	telegramService "github.com/jusoaresg/gorgon/external/telegram/service"
 	blacklistModel "github.com/jusoaresg/gorgon/internal/blacklist/model"
 	blacklistRepository "github.com/jusoaresg/gorgon/internal/blacklist/repository"
 	"github.com/jusoaresg/gorgon/internal/downloads/service"
 	episodeEvents "github.com/jusoaresg/gorgon/internal/episode/events"
 	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
 	episodeService "github.com/jusoaresg/gorgon/internal/episode/service"
-	epContentModel "github.com/jusoaresg/gorgon/internal/episode_content/model"
-	epContentRepository "github.com/jusoaresg/gorgon/internal/episode_content/repository"
 	"github.com/jusoaresg/gorgon/internal/scheduler/jobs"
 	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
-	telegramSchema "github.com/jusoaresg/gorgon/external/telegram/schema"
-	telegramService "github.com/jusoaresg/gorgon/external/telegram/service"
 	"github.com/jusoaresg/gorgon/pkg/schemas"
-	"github.com/jusoaresg/gorgon/utils"
 	"github.com/jusoaresg/gorgon/views"
 	"github.com/labstack/echo/v4"
 )
@@ -155,66 +155,39 @@ func (h *Handler) ImportDownload(c echo.Context) error {
 	return nil
 }
 
+// RemoveDownload delegates all physical cleanup and finalization to the shared coordinator.
 func (h *Handler) RemoveDownload(c echo.Context) error {
-	logger := config.GetLogger()
-
-	hash := c.FormValue("hash")
+	hash := strings.ToLower(strings.TrimSpace(c.FormValue("hash")))
 	if hash == "" {
-		schemas.SendError(c, 400, "Missing torrent hash")
+		schemas.SendError(c, http.StatusBadRequest, "Missing torrent hash")
 		return nil
 	}
-
-	torrentService, err := qbittorrentService.NewQBittorrentService(logger)
+	svc := h.DeletionService
+	if svc == nil {
+		var err error
+		svc, err = release_deletion.New(h.DB, config.GetLogger())
+		if err != nil {
+			return c.JSON(http.StatusServiceUnavailable, map[string]any{"error": "Torrent client is unavailable; download was preserved"})
+		}
+	}
+	op, err := svc.Delete(c.Request().Context(), release_deletion.Request{Hash: hash, Intention: "skipped"})
 	if err != nil {
-		logger.Error("failed to create qbittorrent service for removing download", slog.String("error", err.Error()))
-		schemas.SendError(c, 500, "Torrent client not available")
-		return nil
-	}
-
-	if err := torrentService.DeleteTorrent(hash, true); err != nil {
-		logger.Error("failed to delete torrent from client", slog.String("hash", hash), slog.String("error", err.Error()))
-		schemas.SendError(c, 500, "Failed to remove torrent")
-		return nil
-	}
-
-	episodeTorrent, err := h.EpisodeTorrentRepo.GetByHash(hash)
-	if err == nil && episodeTorrent.EpisodeId != 0 {
-		if err := h.EpisodeTorrentRepo.DeleteByEpisodeID(episodeTorrent.EpisodeId); err != nil {
-			logger.Error("failed to delete episode torrent", slog.String("error", err.Error()))
+		status := http.StatusInternalServerError
+		if errors.Is(err, release_deletion.ErrConflict) {
+			status = http.StatusConflict
 		}
-
-		episode, err := h.EpisodeRepo.GetByID(episodeTorrent.EpisodeId)
-		if err == nil {
-			cfg, err := config.LoadConfig()
-			if err == nil {
-				showRepo := showRepository.NewShowRepository(h.DB)
-				show, err := showRepo.GetById(episode.ShowID)
-				if err == nil {
-					epContentRepo := epContentRepository.NewEpisodeContentRepository(h.DB)
-					episodeContents, err := epContentRepo.ListByEpisodeId(episode.ID)
-					if err == nil {
-						for _, ec := range episodeContents {
-							_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, episode, ec)
-							_ = epContentRepo.DeleteById(ec.ID)
-						}
-					}
-					_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, episode, epContentModel.EpisodeContent{})
-					_ = utils.CleanBrokenSymlinksInSeason(cfg.ShowsFolder, show.Name, episode.Season)
-				}
-			}
-
-			episode.Tracking = episodeModel.TrackingSkipped
-			if err := h.EpisodeRepo.Update(episode); err != nil {
-				logger.Error("failed to reset episode tracking to skipped", slog.Int64("episode_id", episode.ID), slog.String("error", err.Error()))
-			} else {
-				episodeEvents.EmitEpisodeTrackingUpdatedEvent(episode.ID, episode.Tracking, "")
-			}
+		if errors.Is(err, release_deletion.ErrUnsafe) {
+			status = http.StatusUnprocessableEntity
 		}
+		return c.JSON(status, map[string]any{"operation": op, "error": "Download deletion is incomplete; recovery context was preserved"})
 	}
-
-	schemas.SendSuccess(c, "Remove Download", map[string]any{
-		"toastMessage": "Download removed",
-	})
+	if op.Status != "completed" {
+		return c.JSON(http.StatusAccepted, map[string]any{"operation": op, "message": "Download deletion is in progress"})
+	}
+	if op.EpisodeID != 0 {
+		episodeEvents.EmitEpisodeTrackingUpdatedEvent(op.EpisodeID, "skipped", "")
+	}
+	schemas.SendSuccess(c, "Remove Download", map[string]any{"toastMessage": "Download removed", "operation": op})
 	return nil
 }
 
