@@ -53,27 +53,43 @@ func ResolveStoredLinkPath(showsFolder, showName string, episode episodeModel.Ep
 	return SymlinkPathForEpisode(showsFolder, showName, episode, content)
 }
 
-func removeMediaEntryIfValid(path string) {
+func removeMediaEntryIfValid(path string) error {
 	if path == "" {
-		return
+		return nil
 	}
-	if info, err := os.Lstat(path); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 || info.Mode().IsRegular() {
-			_ = os.Remove(path)
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || info.Mode().IsRegular() {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
 		}
 	}
+	return nil
 }
 
 func DeleteSymlink(showsFolder, showName string, episode episodeModel.Episode, episodeContent epContentModel.EpisodeContent) error {
 	if episodeContent.FilePath != "" {
-		if storedPath, err := ResolveStoredLinkPath(showsFolder, showName, episode, episodeContent); err == nil {
-			removeMediaEntryIfValid(storedPath)
+		storedPath, err := ResolveStoredLinkPath(showsFolder, showName, episode, episodeContent)
+		if err != nil {
+			return err
+		}
+		if err := removeMediaEntryIfValid(storedPath); err != nil {
+			return err
 		}
 	}
 
 	if episodeContent.Name != "" {
-		if linkPath, err := SymlinkPathForEpisode(showsFolder, showName, episode, episodeContent); err == nil {
-			removeMediaEntryIfValid(linkPath)
+		linkPath, err := SymlinkPathForEpisode(showsFolder, showName, episode, episodeContent)
+		if err != nil {
+			return err
+		}
+		if err := removeMediaEntryIfValid(linkPath); err != nil {
+			return err
 		}
 		// Check legacy un-normalized show folder path as well
 		legacyLinkPath, err := filepath.Abs(filepath.Join(
@@ -82,8 +98,11 @@ func DeleteSymlink(showsFolder, showName string, episode episodeModel.Episode, e
 			fmt.Sprintf("Season %d", episode.Season),
 			NormalizeFileName(fmt.Sprintf("%s - S%dE%d - %s%s", showName, episode.Season, episode.Number, episode.Name, filepath.Ext(episodeContent.Name))),
 		))
-		if err == nil {
-			removeMediaEntryIfValid(legacyLinkPath)
+		if err != nil {
+			return err
+		}
+		if err := removeMediaEntryIfValid(legacyLinkPath); err != nil {
+			return err
 		}
 	}
 
@@ -96,14 +115,23 @@ func DeleteSymlink(showsFolder, showName string, episode episodeModel.Episode, e
 
 	for _, seasonFolder := range seasonDirs {
 		entries, err := os.ReadDir(seasonFolder)
-		if err != nil {
+		if os.IsNotExist(err) {
 			continue
+		}
+		if err != nil {
+			return err
 		}
 
 		for _, entry := range entries {
 			entryPath := filepath.Join(seasonFolder, entry.Name())
 			info, err := os.Lstat(entryPath)
-			if err != nil || (info.Mode()&os.ModeSymlink == 0 && !info.Mode().IsRegular()) {
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if info.Mode()&os.ModeSymlink == 0 && !info.Mode().IsRegular() {
 				continue
 			}
 
@@ -111,6 +139,9 @@ func DeleteSymlink(showsFolder, showName string, episode episodeModel.Episode, e
 
 			if !shouldRemove && episodeContent.Name != "" && info.Mode()&os.ModeSymlink != 0 {
 				target, err := os.Readlink(entryPath)
+				if err != nil && !os.IsNotExist(err) {
+					return err
+				}
 				if err == nil {
 					baseTarget := filepath.Base(target)
 					baseContent := filepath.Base(episodeContent.Name)
@@ -121,13 +152,14 @@ func DeleteSymlink(showsFolder, showName string, episode episodeModel.Episode, e
 			}
 
 			if shouldRemove {
-				_ = os.Remove(entryPath)
+				if err := removeMediaEntryIfValid(entryPath); err != nil {
+					return err
+				}
 			}
 		}
 	}
 
-	_ = CleanBrokenSymlinksInSeason(showsFolder, showName, episode.Season)
-	return nil
+	return CleanBrokenSymlinksInSeason(showsFolder, showName, episode.Season)
 }
 
 func CleanBrokenSymlinksInSeason(showsFolder, showName string, season int) error {
@@ -150,8 +182,16 @@ func CleanBrokenSymlinksInSeason(showsFolder, showName string, season int) error
 		for _, entry := range entries {
 			entryPath := filepath.Join(seasonFolder, entry.Name())
 			broken, err := IsSymlinkBroken(entryPath)
-			if err == nil && broken {
-				_ = os.Remove(entryPath)
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if broken {
+				if err := removeMediaEntryIfValid(entryPath); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -266,7 +306,10 @@ func IsSymlinkBroken(path string) (bool, error) {
 		return false, nil
 	}
 	_, err = os.Stat(path)
-	return os.IsNotExist(err), nil
+	if os.IsNotExist(err) {
+		return true, nil
+	}
+	return false, err
 }
 
 // MigrateShowFolder renames or merges the existing show folder to the new normalized show name.
