@@ -9,6 +9,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/jusoaresg/gorgon/config"
+	"github.com/jusoaresg/gorgon/internal/release_deletion"
 	"github.com/jusoaresg/gorgon/internal/scheduler/cron"
 	"github.com/jusoaresg/gorgon/internal/scheduler/workers"
 
@@ -69,6 +70,29 @@ func NewManager(db *sqlx.DB, opts ...ManagerOption) *Manager {
 // Start initiates all background tasks, worker pools, and periodic crons under context control.
 func (m *Manager) Start(ctx context.Context) {
 	m.logger.Info("Starting scheduler manager")
+
+	// Persisted deletions recover independently of indexer/search availability.
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		ticker := time.NewTicker(m.pollInterval)
+		defer ticker.Stop()
+		for {
+			if ctx.Err() != nil {
+				return
+			}
+			svc, err := release_deletion.New(m.db, m.logger)
+			if err == nil {
+				svc.Run(ctx)
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 
 	// 1. Connection & worker initialization
 	m.wg.Add(1)

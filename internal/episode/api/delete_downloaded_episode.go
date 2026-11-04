@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/jusoaresg/gorgon/internal/episode/events"
 	"github.com/jusoaresg/gorgon/internal/release_deletion"
 	"github.com/jusoaresg/gorgon/pkg/schemas"
 	"github.com/labstack/echo/v4"
@@ -35,7 +34,6 @@ func (h *Handler) DeleteDownloadedEpisode(c echo.Context) error {
 		}
 		return c.JSON(status, map[string]any{"operation": op, "error": "Episode deletion is incomplete; original tracking and recovery context were preserved"})
 	}
-	episode.EmitEpisodeTrackingUpdatedEvent(id, "skipped", "")
 	schemas.SendSuccess(c, "Delete Downloaded Episode", map[string]any{"toastMessage": "Episode deleted", "operation": op})
 	return nil
 }

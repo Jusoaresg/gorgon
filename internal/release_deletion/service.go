@@ -47,20 +47,25 @@ type Manifest struct {
 	ShowsRoot      string            `json:"shows_root"`
 }
 type Operation struct {
-	ID           string `db:"id" json:"id"`
-	Target       string `db:"target" json:"target"`
-	EpisodeID    int64  `db:"episode_id" json:"episode_id"`
-	Hash         string `db:"hash" json:"hash"`
-	Intention    string `db:"intention" json:"intention"`
-	Status       string `db:"status" json:"status"`
-	Stage        string `db:"stage" json:"stage"`
-	ManifestJSON string `db:"manifest" json:"-"`
-	Attempts     int    `db:"attempts" json:"attempts"`
-	LastError    string `db:"last_error" json:"last_error"`
-	CreatedAt    int64  `db:"created_at" json:"created_at"`
-	UpdatedAt    int64  `db:"updated_at" json:"updated_at"`
+	NextAttemptAt int64  `db:"next_attempt_at" json:"next_attempt_at"`
+	RetryCount    int    `db:"retry_count" json:"retry_count"`
+	Retryable     bool   `db:"retryable" json:"retryable"`
+	ID            string `db:"id" json:"id"`
+	Target        string `db:"target" json:"target"`
+	EpisodeID     int64  `db:"episode_id" json:"episode_id"`
+	Hash          string `db:"hash" json:"hash"`
+	Intention     string `db:"intention" json:"intention"`
+	Status        string `db:"status" json:"status"`
+	Stage         string `db:"stage" json:"stage"`
+	ManifestJSON  string `db:"manifest" json:"-"`
+	Attempts      int    `db:"attempts" json:"attempts"`
+	LastError     string `db:"last_error" json:"last_error"`
+	CreatedAt     int64  `db:"created_at" json:"created_at"`
+	UpdatedAt     int64  `db:"updated_at" json:"updated_at"`
 }
 type Options struct {
+	Now                 func() time.Time
+	OnChange            func(Operation)
 	Client              Client
 	DownloadRoot        string
 	ShowsRoot           string
@@ -84,6 +89,7 @@ func New(db *sqlx.DB, logger *slog.Logger) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	client.APIService.Client.Timeout = 2 * time.Second
 	return NewWithOptions(db, logger, Options{Client: client, DownloadRoot: cfg.QBittorrentDownloadFolder, ShowsRoot: cfg.ShowsFolder}), nil
 }
 func NewWithOptions(db *sqlx.DB, logger *slog.Logger, o Options) *Service {
@@ -348,7 +354,7 @@ func (s *Service) prepare(r Request) (Operation, error) {
 	if err != nil {
 		return op, err
 	}
-	now := time.Now().Unix()
+	now := s.now().Unix()
 	op = Operation{ID: uuid.NewString(), Target: target, EpisodeID: r.EpisodeID, Hash: r.Hash, Intention: r.Intention, Status: "pending", Stage: "prepared", ManifestJSON: string(b), CreatedAt: now, UpdatedAt: now}
 	_, err = s.DB.NamedExec(`INSERT INTO release_deletion_operations (id,target,episode_id,hash,intention,status,stage,manifest,attempts,last_error,created_at,updated_at) VALUES (:id,:target,:episode_id,:hash,:intention,:status,:stage,:manifest,:attempts,:last_error,:created_at,:updated_at)`, op)
 	return op, err
@@ -363,8 +369,22 @@ func (s *Service) checkpoint(op *Operation, status, stage string, err error) err
 			s.Logger.Error("release deletion failed", "operation_id", op.ID, "stage", stage, "error", err)
 		}
 	}
-	op.UpdatedAt = time.Now().Unix()
-	_, e := s.DB.Exec("UPDATE release_deletion_operations SET status=?,stage=?,attempts=?,last_error=?,updated_at=? WHERE id=?", op.Status, op.Stage, op.Attempts, op.LastError, op.UpdatedAt, op.ID)
+	op.UpdatedAt = s.now().Unix()
+	op.NextAttemptAt = 0
+	if err != nil {
+		op.Retryable = retryable(err)
+		if op.Retryable && op.RetryCount < MaxAutomaticAttempts {
+			index := op.RetryCount - 1
+			if index < 0 {
+				index = 0
+			}
+			op.NextAttemptAt = s.now().Add(retryDelays[index]).Unix()
+		}
+	}
+	_, e := s.DB.Exec("UPDATE release_deletion_operations SET status=?,stage=?,attempts=?,last_error=?,updated_at=?,next_attempt_at=?,retry_count=?,retryable=? WHERE id=?", op.Status, op.Stage, op.Attempts, op.LastError, op.UpdatedAt, op.NextAttemptAt, op.RetryCount, op.Retryable, op.ID)
+	if e == nil {
+		s.notify(*op)
+	}
 	return e
 }
 func fileIdentity(info os.FileInfo) string {
@@ -389,6 +409,7 @@ func (s *Service) run(ctx context.Context, op Operation) (Operation, error) {
 		return op, nil
 	}
 	op.Attempts++
+	op.RetryCount++
 	fail := func(err error) (Operation, error) {
 		e := s.checkpoint(&op, "failed", op.Stage, err)
 		return op, errors.Join(err, e)
@@ -491,11 +512,15 @@ func (s *Service) run(ctx context.Context, op Operation) (Operation, error) {
 			return txFail(err)
 		}
 	}
-	if _, err = tx.Exec("UPDATE release_deletion_operations SET status='completed',stage='completed',last_error='',updated_at=? WHERE id=?", time.Now().Unix(), op.ID); err != nil {
+	if _, err = tx.Exec("UPDATE release_deletion_operations SET status='completed',stage='completed',last_error='',next_attempt_at=0,updated_at=? WHERE id=?", time.Now().Unix(), op.ID); err != nil {
 		return txFail(err)
 	}
 	if err = tx.Commit(); err != nil {
 		return fail(err)
 	}
-	return s.Get(op.ID)
+	completed, e := s.Get(op.ID)
+	if e == nil {
+		s.notify(completed)
+	}
+	return completed, e
 }
