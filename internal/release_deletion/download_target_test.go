@@ -31,6 +31,8 @@ func TestHashDeletionWithoutAssociationRetainsVerifiedManifest(t *testing.T) {
 	s, db, source, link, removeFiles := fixture(t)
 	_, err := db.Exec("DELETE FROM episode_torrents")
 	require.NoError(t, err)
+	_, err = db.Exec("DELETE FROM episode_contents")
+	require.NoError(t, err)
 	*removeFiles = true
 	op, err := s.Delete(context.Background(), Request{Hash: "abc", Intention: "skipped"})
 	require.NoError(t, err)

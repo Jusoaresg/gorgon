@@ -6,21 +6,12 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/jusoaresg/gorgon/config"
 	"github.com/jusoaresg/gorgon/external/qbittorrent/schema"
 	qbittorrentService "github.com/jusoaresg/gorgon/external/qbittorrent/service"
-	telegramSchema "github.com/jusoaresg/gorgon/external/telegram/schema"
-	telegramService "github.com/jusoaresg/gorgon/external/telegram/service"
-	blacklistModel "github.com/jusoaresg/gorgon/internal/blacklist/model"
-	blacklistRepository "github.com/jusoaresg/gorgon/internal/blacklist/repository"
 	"github.com/jusoaresg/gorgon/internal/downloads/service"
-	episodeEvents "github.com/jusoaresg/gorgon/internal/episode/events"
-	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
-	episodeService "github.com/jusoaresg/gorgon/internal/episode/service"
 	"github.com/jusoaresg/gorgon/internal/scheduler/jobs"
-	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
 	"github.com/jusoaresg/gorgon/pkg/schemas"
 	"github.com/jusoaresg/gorgon/views"
 	"github.com/labstack/echo/v4"
@@ -189,89 +180,34 @@ func (h *Handler) RemoveDownload(c echo.Context) error {
 }
 
 func (h *Handler) BlacklistDownload(c echo.Context) error {
-	logger := config.GetLogger()
-
-	hash := c.FormValue("hash")
+	hash := strings.ToLower(strings.TrimSpace(c.FormValue("hash")))
 	if hash == "" {
-		schemas.SendError(c, 400, "Missing torrent hash")
+		schemas.SendError(c, http.StatusBadRequest, "Missing torrent hash")
 		return nil
 	}
-
-	torrentService, err := qbittorrentService.NewQBittorrentService(logger)
-	if err != nil {
-		logger.Error("failed to create qbittorrent service for blacklisting download", slog.String("error", err.Error()))
-		schemas.SendError(c, 500, "Torrent client not available")
-		return nil
-	}
-
-	if err := torrentService.DeleteTorrent(hash, true); err != nil {
-		logger.Error("failed to delete torrent from client", slog.String("hash", hash), slog.String("error", err.Error()))
-		schemas.SendError(c, 500, "Failed to remove torrent")
-		return nil
-	}
-
-	episodeTorrent, err := h.EpisodeTorrentRepo.GetByHash(hash)
-	if err == nil && episodeTorrent.EpisodeId != 0 {
-		episode, epErr := h.EpisodeRepo.GetByID(episodeTorrent.EpisodeId)
-		if epErr == nil {
-			blRepo := blacklistRepository.NewBlacklistRepository(h.DB)
-			epIDCopy := episode.ID
-			_, _ = blRepo.Create(blacklistModel.ReleaseBlacklist{
-				ShowID:       episode.ShowID,
-				EpisodeID:    &epIDCopy,
-				InfoHash:     episodeTorrent.Hash,
-				ReleaseTitle: episodeTorrent.Title,
-				Indexer:      episodeTorrent.Indexer,
-				Reason:       "manual blacklist",
-				CreatedAt:    time.Now().Unix(),
-			})
-
-			_ = h.EpisodeTorrentRepo.DeleteByEpisodeID(episode.ID)
-
-			episode.Tracking = episodeModel.TrackingWanted
-			if err := h.EpisodeRepo.Update(episode); err == nil {
-				episodeEvents.EmitEpisodeTrackingUpdatedEvent(episode.ID, episode.Tracking, "")
-			}
-
-			showRepo := showRepository.NewShowRepository(h.DB)
-			go func(epCopy episodeModel.Episode, epTorrTitle, epTorrURL, epTorrIndexer string) {
-				tgSvc, err := telegramService.NewTelegramService(logger)
-				if err != nil {
-					return
-				}
-				showName := ""
-				if s, err := showRepo.GetById(epCopy.ShowID); err == nil {
-					showName = s.Name
-				}
-				_ = tgSvc.SendReleaseBlacklisted(telegramSchema.ReleaseBlacklistedTemplateInput{
-					ShowName:     showName,
-					Season:       epCopy.Season,
-					Episode:      epCopy.Number,
-					EpisodeTitle: epCopy.Name,
-					ReleaseTitle: epTorrTitle,
-					ReleaseURL:   epTorrURL,
-					Indexer:      epTorrIndexer,
-					Reason:       "manual blacklist",
-				})
-			}(episode, episodeTorrent.Title, episodeTorrent.InfoUrl, episodeTorrent.Indexer)
-
-			searchSvc := episodeService.NewEpisodeSearchService(
-				h.DB,
-				logger,
-				&episodeService.EpisodeSearcher{},
-				episodeService.NewEpisodeDownloader(h.DB),
-				h.EpisodeRepo,
-				showRepo,
-			)
-			go func(epID int) {
-				_ = searchSvc.ProcessSingleEpisode(epID)
-			}(int(episode.ID))
+	svc := h.DeletionService
+	if svc == nil {
+		var err error
+		svc, err = release_deletion.New(h.DB, config.GetLogger())
+		if err != nil {
+			return c.JSON(http.StatusServiceUnavailable, map[string]any{"error": "Torrent client is unavailable; release was preserved"})
 		}
 	}
-
-	schemas.SendSuccess(c, "Blacklist Download", map[string]any{
-		"toastMessage": "Release blacklisted — searching for another",
-	})
+	op, err := release_deletion.Dispatch(c.Request().Context(), svc, release_deletion.Request{Hash: hash, Intention: "blacklist", BlacklistReason: "manual blacklist"})
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, release_deletion.ErrConflict) {
+			status = http.StatusConflict
+		}
+		if errors.Is(err, release_deletion.ErrUnsafe) {
+			status = http.StatusUnprocessableEntity
+		}
+		return c.JSON(status, map[string]any{"operation": op, "error": "Release cleanup is incomplete; replacement search has not started"})
+	}
+	if op.Status != "completed" {
+		return c.JSON(http.StatusAccepted, map[string]any{"operation": op, "message": "Blacklist cleanup is in progress"})
+	}
+	schemas.SendSuccess(c, "Blacklist Download", map[string]any{"toastMessage": "Release blacklisted; replacement search queued", "operation": op})
 	return nil
 }
 

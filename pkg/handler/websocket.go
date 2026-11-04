@@ -52,13 +52,35 @@ func WebSocketHandler(c echo.Context) error {
 	return nil
 }
 
+var broadcastQueue = make(chan any, 128)
+var broadcasterOnce sync.Once
+
+// SendWebSocketMessage never makes application state transitions wait for clients.
+// Slow/offline clients recover durable operation state through the query API.
 func SendWebSocketMessage(message any) {
+	broadcasterOnce.Do(func() {
+		go func() {
+			for item := range broadcastQueue {
+				broadcast(item)
+			}
+		}()
+	})
+	select {
+	case broadcastQueue <- message:
+	default:
+	}
+}
+func broadcast(message any) {
 	logger := config.GetLogger().WithGroup("websocket").With("name", "SendWebSocketMessage")
 	mutex.Lock()
 	defer mutex.Unlock()
 
+	deadline := time.Now().Add(250 * time.Millisecond)
 	for client := range clients {
-		_ = client.SetWriteDeadline(time.Now().Add(250 * time.Millisecond))
+		if time.Now().After(deadline) {
+			break
+		}
+		_ = client.SetWriteDeadline(deadline)
 		if err := client.WriteJSON(message); err != nil {
 			logger.Error("error while sending websocket message", slog.Any("Message", message), slog.Any("Client", client))
 			client.Close()
