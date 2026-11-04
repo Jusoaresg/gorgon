@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -135,7 +136,7 @@ func TestEvaluateStalledTorrent_DoublesTimeoutWhenProgressOver50Percent(t *testi
 	assert.Nil(t, expiresAt, "old release should be permanently blacklisted")
 }
 
-func TestEvaluateStalledTorrent_MetaDLAndErrorStates(t *testing.T) {
+func TestEvaluateStalledTorrent_MetaDLTimeout(t *testing.T) {
 	now := time.Date(2026, 10, 13, 15, 0, 0, 0, time.UTC)
 	cfg := DefaultStallConfig()
 
@@ -154,14 +155,36 @@ func TestEvaluateStalledTorrent_MetaDLAndErrorStates(t *testing.T) {
 	shouldBL, reason, _, _, _ := EvaluateStalledTorrent(metaTorrent, epTorrent, cfg, now)
 	assert.True(t, shouldBL)
 	assert.Contains(t, reason, "metaDL")
+}
 
-	// error state triggers immediately even if StalledSince == 0
-	epTorrent.StalledSince = 0
-	errTorrent := schema.CheckTorrentResponse{
-		Hash:  "abc123",
-		State: "error",
+func TestEvaluateStalledTorrent_ClientFailureDoesNotBlacklistRelease(t *testing.T) {
+	now := time.Date(2026, 10, 13, 15, 0, 0, 0, time.UTC)
+	for _, state := range []string{"error", "missingFiles"} {
+		for _, amountLeft := range []int64{900000, 850000} {
+			t.Run(fmt.Sprintf("%s/amountLeft=%d", state, amountLeft), func(t *testing.T) {
+				epTorrent := episodeTorrentModel.EpisodeTorrent{
+					StalledSince:   now.Add(-48 * time.Hour).Unix(),
+					LastAmountLeft: 900000,
+				}
+				torrent := schema.CheckTorrentResponse{State: state, AmountLeft: amountLeft}
+				shouldBL, reason, stalledSince, nextAmountLeft, expiresAt := EvaluateStalledTorrent(torrent, epTorrent, DefaultStallConfig(), now)
+				assert.False(t, shouldBL, "client failures do not establish that a release is problematic")
+				assert.Empty(t, reason)
+				assert.Zero(t, stalledSince, "client downtime must not count toward release stall timeouts")
+				assert.Equal(t, amountLeft, nextAmountLeft)
+				assert.Nil(t, expiresAt)
+
+				// On recovery, an actual stall starts a new timer instead of
+				// inheriting the time spent in a client error state.
+				epTorrent.StalledSince = stalledSince
+				epTorrent.LastAmountLeft = nextAmountLeft
+				torrent.State = "stalledDL"
+				recoveredAt := now.Add(time.Minute)
+				shouldBL, reason, stalledSince, _, _ = EvaluateStalledTorrent(torrent, epTorrent, DefaultStallConfig(), recoveredAt)
+				assert.False(t, shouldBL)
+				assert.Empty(t, reason)
+				assert.Equal(t, recoveredAt.Unix(), stalledSince)
+			})
+		}
 	}
-	shouldBL, reason, _, _, _ = EvaluateStalledTorrent(errTorrent, epTorrent, cfg, now)
-	assert.True(t, shouldBL)
-	assert.Contains(t, reason, "error")
 }

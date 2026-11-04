@@ -44,7 +44,7 @@ func DefaultStallConfig() StallEvaluationConfig {
 	}
 }
 
-// EvaluateStalledTorrent determines whether an in-progress torrent should be blacklisted due to stall or error,
+// EvaluateStalledTorrent determines whether an in-progress torrent should be blacklisted due to a download stall,
 // honoring a warm-up grace period for newly published RSS releases and tracking real byte progress.
 func EvaluateStalledTorrent(
 	torrent schema.CheckTorrentResponse,
@@ -54,12 +54,10 @@ func EvaluateStalledTorrent(
 ) (shouldBlacklist bool, reason string, nextStalledSince int64, nextAmountLeft int64, expiresAt *int64) {
 	nextAmountLeft = torrent.AmountLeft
 
-	// 1. Immediate failure states from qBittorrent
-	if torrent.State == "error" || torrent.State == "missingFiles" {
-		return true, "qBittorrent state: " + torrent.State, epTorrent.StalledSince, nextAmountLeft, nil
-	}
-
-	// 2. Check if state is stalled and whether real byte progress occurred since last tick
+	// Client errors (including error and missingFiles) do not establish a bad release.
+	// Only download stalls are eligible for blacklisting; other states reset the
+	// timer so client downtime cannot count toward a subsequent stall timeout.
+	// Check whether real byte progress occurred since last tick.
 	isStalledState := torrent.State == "stalledDL" || torrent.State == "metaDL" || torrent.State == "forcedMetaDL"
 	madeProgress := epTorrent.LastAmountLeft != -1 && torrent.AmountLeft >= 0 && torrent.AmountLeft < epTorrent.LastAmountLeft
 
@@ -67,7 +65,7 @@ func EvaluateStalledTorrent(
 		return false, "", 0, nextAmountLeft, nil
 	}
 
-	// 3. Fresh RSS release protection (swarm warm-up)
+	// Fresh RSS release protection (swarm warm-up)
 	var pubTime time.Time
 	hasPubTime := false
 	if epTorrent.PublishDate != "" {
@@ -82,7 +80,7 @@ func EvaluateStalledTorrent(
 		return false, "", 0, nextAmountLeft, nil
 	}
 
-	// 4. Start or continue stall timer
+	// Start or continue stall timer
 	stalledSince := epTorrent.StalledSince
 	if stalledSince == 0 {
 		return false, "", now.Unix(), nextAmountLeft, nil
@@ -99,7 +97,7 @@ func EvaluateStalledTorrent(
 		return nil
 	}
 
-	// 5. Evaluate state-specific timeouts
+	// Evaluate state-specific timeouts
 	if (torrent.State == "metaDL" || torrent.State == "forcedMetaDL") && stalledDuration >= cfg.MetaDLTimeout {
 		return true, "metadata download timeout (metaDL)", stalledSince, nextAmountLeft, computeTTL()
 	}
