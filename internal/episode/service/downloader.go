@@ -1,7 +1,13 @@
 package service
 
 import (
-	"log/slog"
+	"context"
+	"errors"
+	"fmt"
+	qs "github.com/jusoaresg/gorgon/external/qbittorrent/schema"
+	"github.com/jusoaresg/gorgon/internal/release_deletion"
+	"github.com/jusoaresg/gorgon/internal/release_guard"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/jusoaresg/gorgon/config"
@@ -17,7 +23,14 @@ type EpisodeDownloaderInterface interface {
 }
 
 type EpisodeDownloader struct {
-	db *sqlx.DB
+	db            *sqlx.DB
+	TorrentClient AcquisitionClient
+}
+
+// AcquisitionClient exposes both ownership-aware acquisition and reliable cleanup.
+type AcquisitionClient interface {
+	release_deletion.Client
+	AddTorrentIfAbsent(string) (bool, error)
 }
 
 func NewEpisodeDownloader(db ...*sqlx.DB) *EpisodeDownloader {
@@ -36,27 +49,66 @@ func (d *EpisodeDownloader) getDB() *sqlx.DB {
 }
 
 func (d *EpisodeDownloader) DownloadEpisode(ep model.Episode, response schema.SearchResponse, score ...int) error {
-	logger := config.GetLogger()
+	value := 0
+	if len(score) > 0 {
+		value = score[0]
+	}
+	return d.acquire(ep, response, value, nil)
+}
 
-	torrentService, err := qbittorrentService.NewQBittorrentService(logger)
+func (d *EpisodeDownloader) acquire(ep model.Episode, response schema.SearchResponse, score int, upgrade *UpgradeInfo) error {
+	db := d.getDB()
+	unlock := release_guard.Lock(db)
+	defer unlock()
+	hash := strings.ToLower(strings.TrimSpace(response.InfoHash))
+	if hash == "" {
+		return fmt.Errorf("candidate torrent hash is required to establish ownership")
+	}
+	if err := validateSnatch(db, &ep, hash); err != nil {
+		return err
+	}
+	var associated int
+	if err := db.Get(&associated, "SELECT count(*) FROM episode_torrents WHERE lower(trim(hash))=?", hash); err != nil {
+		return err
+	}
+	if associated > 0 {
+		return fmt.Errorf("candidate torrent already belongs to an episode")
+	}
+	logger := config.GetLogger()
+	client := d.TorrentClient
+	if client == nil {
+		var err error
+		client, err = qbittorrentService.NewQBittorrentService(logger)
+		if err != nil {
+			return err
+		}
+	}
+	var existing []qs.CheckTorrentResponse
+	if err := client.CheckTorrentsWithHash("", hash, &existing); err != nil {
+		return err
+	}
+	if len(existing) > 0 {
+		return fmt.Errorf("candidate torrent already exists; acquisition has no cleanup ownership")
+	}
+	owned, err := client.AddTorrentIfAbsent(response.Guid)
 	if err != nil {
 		return err
 	}
-
-	if err := torrentService.AddTorrent(response.Guid); err != nil {
-		logger.Error("failed to add torrent", slog.String("error", err.Error()))
-		return err
+	if !owned {
+		return fmt.Errorf("candidate torrent already exists; acquisition has no cleanup ownership")
 	}
-
-	logger.Info("added torrent to torrent client")
-
-	if err := SnatchEpisode(&ep, response, score...); err != nil {
-		if err := torrentService.DeleteTorrent(response.InfoHash, true); err != nil {
-			return err
+	if err = snatchEpisodeLocked(db, &ep, response, score, upgrade); err != nil {
+		cfg, cfgErr := config.LoadConfig()
+		if cfgErr != nil {
+			return errors.Join(err, cfgErr, fmt.Errorf("new torrent requires cleanup"))
+		}
+		deletion := release_deletion.NewWithOptions(db, logger, release_deletion.Options{Client: client, DownloadRoot: cfg.QBittorrentDownloadFolder, ShowsRoot: cfg.ShowsFolder})
+		op, cleanupErr := deletion.DeleteWhileGuarded(context.Background(), release_deletion.Request{Hash: hash, Intention: "skipped"})
+		if cleanupErr != nil {
+			return errors.Join(err, fmt.Errorf("acquisition cleanup incomplete (operation %s): %w", op.ID, cleanupErr))
 		}
 		return err
 	}
-
 	return nil
 }
 
@@ -65,37 +117,10 @@ func (d *EpisodeDownloader) DownloadEpisodeTorrent(ep model.Episode, response sc
 }
 
 func (d *EpisodeDownloader) UpgradeEpisode(ep model.Episode, response schema.SearchResponse, newScore int, upgrade ...UpgradeInfo) error {
-	logger := config.GetLogger()
-
-	torrentService, err := qbittorrentService.NewQBittorrentService(logger)
-	if err != nil {
-		return err
-	}
-
-	// Add the candidate upgrade torrent into the client without deleting existing files
-	if err := torrentService.AddTorrent(response.Guid); err != nil {
-		logger.Error("failed to add upgrade torrent to client", slog.String("error", err.Error()))
-		return err
-	}
-
-	logger.Info("added upgrade torrent to client",
-		slog.String("title", response.Title),
-		slog.Int("new_score", newScore),
-	)
-
-	var upgPtr *UpgradeInfo
+	info := &UpgradeInfo{NewScore: newScore}
 	if len(upgrade) > 0 {
-		u := upgrade[0]
-		upgPtr = &u
-	} else {
-		upgPtr = &UpgradeInfo{NewScore: newScore}
+		copy := upgrade[0]
+		info = &copy
 	}
-
-	// Persist the snatch record with the upgraded score and upgrade metadata
-	if err := SnatchEpisodeWithUpgrade(&ep, response, newScore, upgPtr); err != nil {
-		_ = torrentService.DeleteTorrent(response.InfoHash, true)
-		return err
-	}
-
-	return nil
+	return d.acquire(ep, response, newScore, info)
 }

@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"github.com/jusoaresg/gorgon/internal/release_guard"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -9,9 +10,7 @@ import (
 	"github.com/jusoaresg/gorgon/config"
 	"github.com/jusoaresg/gorgon/internal/episode/model"
 	episodeRepositoy "github.com/jusoaresg/gorgon/internal/episode/repository"
-	epContentModel "github.com/jusoaresg/gorgon/internal/episode_content/model"
 	epContentRepository "github.com/jusoaresg/gorgon/internal/episode_content/repository"
-	episodeTorrentRepository "github.com/jusoaresg/gorgon/internal/episode_torrent/repository"
 	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
 	"github.com/jusoaresg/gorgon/utils"
 )
@@ -31,8 +30,9 @@ func VerifyEpisodeWasDeletedWithDB(db *sqlx.DB) {
 		return
 	}
 
+	unlock := release_guard.Lock(db)
+	defer unlock()
 	episodeRepo := episodeRepositoy.NewEpisodeRepository(db)
-	episodeTorrentRepo := episodeTorrentRepository.NewEpisodeTorrentRepository(db)
 	showRepo := showRepository.NewShowRepository(db)
 	episodes, err := episodeRepo.ListByTracking(model.TrackingDownloaded)
 	if err != nil {
@@ -42,6 +42,13 @@ func VerifyEpisodeWasDeletedWithDB(db *sqlx.DB) {
 	episodeContentRepo := epContentRepository.NewEpisodeContentRepository(db)
 
 	for _, episode := range episodes {
+		if err := release_guard.CheckShow(db, episode.ShowID); err != nil {
+			logger.Debug("Skipping protected show reconciliation", "show_id", episode.ShowID, "error", err)
+			continue
+		}
+		if err := release_guard.Check(db, episode.ID, ""); err != nil {
+			continue
+		}
 		contents, err := episodeContentRepo.ListByEpisodeId(episode.ID)
 		if err != nil {
 			continue
@@ -52,9 +59,6 @@ func VerifyEpisodeWasDeletedWithDB(db *sqlx.DB) {
 		}
 
 		show, _ := showRepo.GetById(episode.ShowID)
-		if show.Name != "" && configFile.ShowsFolder != "" {
-			_ = utils.MigrateShowFolder(configFile.ShowsFolder, show.Name, show.Name)
-		}
 
 		for _, episode_content := range contents {
 			destExists := false
@@ -72,7 +76,10 @@ func VerifyEpisodeWasDeletedWithDB(db *sqlx.DB) {
 				if recErr == nil && reconciledPath != "" {
 					if episode_content.FilePath != reconciledPath {
 						episode_content.FilePath = reconciledPath
-						_ = episodeContentRepo.Update(episode_content)
+						if updateErr := episodeContentRepo.Update(episode_content); updateErr != nil {
+							logger.Warn("Unable to update reconciled episode path", "error", updateErr)
+							continue
+						}
 					}
 					if _, statErr := os.Stat(reconciledPath); statErr == nil {
 						destExists = true
@@ -85,21 +92,43 @@ func VerifyEpisodeWasDeletedWithDB(db *sqlx.DB) {
 			_, downloadStatErr := os.Stat(filePath)
 
 			if !destExists && os.IsNotExist(downloadStatErr) {
-				episode.SetNotInstalled()
-
-				err := episodeRepo.Update(episode)
-				if err != nil {
+				// Verification only discards already-absent entries. Physical
+				// release deletion belongs to the coordinator; never scan a
+				// season folder or guess which remaining link can be removed.
+				storedPath, pathErr := utils.ResolveStoredLinkPath(configFile.ShowsFolder, show.Name, episode, episode_content)
+				if pathErr != nil {
+					logger.Warn("Unable to resolve missing episode link", "error", pathErr)
 					continue
 				}
-
-				if show.Name != "" {
-					_ = utils.DeleteSymlink(configFile.ShowsFolder, show.Name, episode, episode_content)
-					_ = utils.DeleteSymlink(configFile.ShowsFolder, show.Name, episode, epContentModel.EpisodeContent{})
-					_ = utils.CleanBrokenSymlinksInSeason(configFile.ShowsFolder, show.Name, episode.Season)
+				if _, linkErr := os.Lstat(storedPath); !os.IsNotExist(linkErr) {
+					if linkErr != nil {
+						logger.Warn("Unable to inspect episode link", "error", linkErr)
+					}
+					continue
 				}
-
-				_ = episodeContentRepo.DeleteById(episode_content.ID)
-				_ = episodeTorrentRepo.DeleteByEpisodeID(episode.ID)
+				tx, txErr := db.Beginx()
+				if txErr != nil {
+					logger.Warn("Unable to reconcile missing episode", "error", txErr)
+					continue
+				}
+				if _, txErr = tx.Exec("DELETE FROM episode_contents WHERE id=?", episode_content.ID); txErr == nil {
+					var remaining int
+					txErr = tx.Get(&remaining, "SELECT count(*) FROM episode_contents WHERE episode_id=?", episode.ID)
+					if txErr == nil && remaining == 0 {
+						if _, txErr = tx.Exec("DELETE FROM episode_torrents WHERE episode_id=?", episode.ID); txErr == nil {
+							_, txErr = tx.Exec("UPDATE episodes SET tracking='skipped' WHERE id=?", episode.ID)
+						}
+					}
+				}
+				if txErr == nil {
+					txErr = tx.Commit()
+				} else {
+					_ = tx.Rollback()
+				}
+				if txErr != nil {
+					logger.Warn("Unable to reconcile missing episode", "error", txErr)
+					continue
+				}
 
 				logger.Info(
 					"Episode file not found, setting tracking to skipped",

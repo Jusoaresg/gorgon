@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"github.com/jusoaresg/gorgon/internal/release_guard"
 	"io"
 	"log/slog"
 	"os"
@@ -351,4 +352,18 @@ func TestUpdateShowWithRelations_RenamesShowFolderAndDownloadedEpisodeFiles(t *t
 	updatedContent, err := contentRepo.GetById(contentID)
 	require.NoError(t, err)
 	assert.Equal(t, expectedNewPath, updatedContent.FilePath)
+}
+
+func TestUpdateShowWithRelationsPreservesDeletionSnapshot(t *testing.T) {
+	fx := setupUpdateShowTest(t)
+	var episodeID int64
+	require.NoError(t, fx.db.Get(&episodeID, "SELECT id FROM episodes WHERE show_id=? LIMIT 1", fx.showID))
+	_, err := fx.db.Exec(`INSERT INTO release_deletion_operations (id,target,episode_id,hash,intention,status,stage,manifest,attempts,last_error,created_at,updated_at) VALUES ('metadata-protected','hash:protected',?,'protected','skipped','failed','links','{}',1,'',1,1)`, episodeID)
+	require.NoError(t, err)
+	dto := buildUpdateShowDTO(t, "New Show Name", `[]`)
+	err = fx.svc.UpdateShowWithRelations(dto, []dtos.SeasonDto{{Number: 1}}, []dtos.EpisodeDto{{Name: "Renamed", Season: 1, Number: 1}})
+	require.ErrorIs(t, err, release_guard.ErrProtected)
+	var name string
+	require.NoError(t, fx.db.Get(&name, "SELECT name FROM shows WHERE id=?", fx.showID))
+	require.Equal(t, "Old Name", name)
 }

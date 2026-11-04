@@ -304,6 +304,13 @@ func (q *QBittorrentService) doAuthenticatedRequest(request func() (*http.Respon
 }
 
 func (q *QBittorrentService) AddTorrent(torrentUrl string) error {
+	_, err := q.AddTorrentIfAbsent(torrentUrl)
+	return err
+}
+
+// AddTorrentIfAbsent distinguishes a new acquisition from a pre-existing torrent,
+// which this caller never owns and must never delete as rollback.
+func (q *QBittorrentService) AddTorrentIfAbsent(torrentUrl string) (bool, error) {
 	var addResp addTorrentResponse
 
 	resp, err := q.doAuthenticatedRequest(func() (*http.Response, error) {
@@ -326,23 +333,23 @@ func (q *QBittorrentService) AddTorrent(torrentUrl string) error {
 		return q.APIService.Post("/api/v2/torrents/add", requestBody.Bytes(), &addResp, headers)
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if resp.StatusCode == http.StatusConflict {
 		q.Logger.Info("torrent already exists in torrent client", slog.String("url", torrentUrl))
-		return nil
+		return false, nil
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to add torrent (status=%d)", resp.StatusCode)
+		return false, fmt.Errorf("failed to add torrent (status=%d)", resp.StatusCode)
 	}
 
 	if addResp.FailureCount > 0 {
-		return fmt.Errorf("failed to add torrent (failures=%d)", addResp.FailureCount)
+		return false, fmt.Errorf("failed to add torrent (failures=%d)", addResp.FailureCount)
 	}
 
-	return nil
+	return true, nil
 }
 
 func (q *QBittorrentService) DeleteTorrent(hash string, deleteFile bool) error {

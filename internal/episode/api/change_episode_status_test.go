@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jusoaresg/gorgon/internal/release_guard"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -140,4 +141,19 @@ func TestChangeTrackingActiveDeletionWithoutTorrentStillDelegates(t *testing.T) 
 	saved, err := ep.GetByID(id)
 	require.NoError(t, err)
 	require.Equal(t, "downloaded", saved.Tracking)
+}
+
+func TestChangeTrackingBusyGateReturnsTransientFailureWithoutMutation(t *testing.T) {
+	h, ep, sh, se := newEpisodeTestHandler()
+	_, id := createEpisodeWithDeps(t, ep, sh, se)
+	before, err := ep.GetByID(id)
+	require.NoError(t, err)
+	unlock := release_guard.Lock(h.DB)
+	defer unlock()
+	rec := changeTracking(t, h, fmt.Sprintf(`{"tracking":"wanted","episode_ids":[%d]}`, id))
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Contains(t, rec.Body.String(), `"status":"busy"`)
+	after, err := ep.GetByID(id)
+	require.NoError(t, err)
+	require.Equal(t, before.Tracking, after.Tracking)
 }
