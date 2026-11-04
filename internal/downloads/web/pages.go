@@ -184,9 +184,6 @@ func (h *Handler) RemoveDownload(c echo.Context) error {
 	if op.Status != "completed" {
 		return c.JSON(http.StatusAccepted, map[string]any{"operation": op, "message": "Download deletion is in progress"})
 	}
-	if op.EpisodeID != 0 {
-		episodeEvents.EmitEpisodeTrackingUpdatedEvent(op.EpisodeID, "skipped", "")
-	}
 	schemas.SendSuccess(c, "Remove Download", map[string]any{"toastMessage": "Download removed", "operation": op})
 	return nil
 }

@@ -121,9 +121,6 @@ func (h *Handler) changeTrackingTarget(c echo.Context, id int64, tracking string
 			}
 			return result
 		}
-		if result.Status == "completed" {
-			episodeEvents.EmitEpisodeTrackingUpdatedEvent(id, tracking, "")
-		}
 		return result
 	}
 	if ep.Tracking != tracking {
