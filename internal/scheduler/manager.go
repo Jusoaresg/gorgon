@@ -9,9 +9,12 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/jusoaresg/gorgon/config"
+	episodeRepository "github.com/jusoaresg/gorgon/internal/episode/repository"
+	episodeService "github.com/jusoaresg/gorgon/internal/episode/service"
 	"github.com/jusoaresg/gorgon/internal/release_deletion"
 	"github.com/jusoaresg/gorgon/internal/scheduler/cron"
 	"github.com/jusoaresg/gorgon/internal/scheduler/workers"
+	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
 
 	prowlarrService "github.com/jusoaresg/gorgon/external/prowlarr/service"
 	qbittorrentService "github.com/jusoaresg/gorgon/external/qbittorrent/service"
@@ -85,6 +88,28 @@ func (m *Manager) Start(ctx context.Context) {
 			if err == nil {
 				svc.Run(ctx)
 				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+
+	// Replacement search is a durable handoff from completed blacklist cleanup.
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		search := episodeService.NewEpisodeSearchService(m.db, m.logger, &episodeService.EpisodeSearcher{}, episodeService.NewEpisodeDownloader(m.db), episodeRepository.NewEpisodeRepository(m.db), showRepository.NewShowRepository(m.db))
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			if ctx.Err() != nil {
+				return
+			}
+			if err := ProcessReplacementSearches(ctx, m.db, search, time.Now()); err != nil && ctx.Err() == nil {
+				m.logger.Error("replacement search handoff failed", "error", err)
 			}
 			select {
 			case <-ctx.Done():
