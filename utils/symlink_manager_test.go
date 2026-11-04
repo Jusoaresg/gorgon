@@ -272,3 +272,76 @@ func TestReconcileEpisodeLink_RenamesDiskTBAWhenDBAlreadyHasNewName(t *testing.T
 	_, err = os.Lstat(ep10Path)
 	assert.NoError(t, err, "Episode 10 must remain untouched")
 }
+
+func TestDeleteSymlinkReportsInvalidSeasonDirectory(t *testing.T) {
+	shows := t.TempDir()
+	show := filepath.Join(shows, "Show")
+	if err := os.MkdirAll(show, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(show, "Season 1"), []byte("not a directory"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := DeleteSymlink(shows, "Show", episodeModel.Episode{Season: 1, Number: 1}, epContentModel.EpisodeContent{Name: "release.mkv"})
+	if err == nil {
+		t.Fatal("expected deletion to report the inaccessible season directory")
+	}
+}
+
+func TestCleanBrokenSymlinksReportsUnresolvableTarget(t *testing.T) {
+	shows := t.TempDir()
+	season := filepath.Join(shows, "Show", "Season 1")
+	if err := os.MkdirAll(season, 0755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(season, "loop.mkv")
+	if err := os.Symlink("loop.mkv", link); err != nil {
+		t.Fatal(err)
+	}
+	if err := CleanBrokenSymlinksInSeason(shows, "Show", 1); err == nil {
+		t.Fatal("expected target resolution failure to be reported")
+	}
+	if _, err := os.Lstat(link); err != nil {
+		t.Fatalf("uncertain target must be preserved: %v", err)
+	}
+}
+
+func TestDeleteSymlinkIsIdempotentAndPreservesOtherEpisodes(t *testing.T) {
+	for _, mode := range []string{LinkModeSymlink, LinkModeHardlink} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			source := filepath.Join(root, "release.mkv")
+			if err := os.WriteFile(source, []byte("video"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			shows := filepath.Join(root, "shows")
+			season := filepath.Join(shows, "Show", "Season 1")
+			selected := filepath.Join(season, "Show - S1E1 - Old title.mkv")
+			other := filepath.Join(season, "Show - S1E10 - Other episode.mkv")
+			if err := CreateMediaLink(source, selected, mode); err != nil {
+				t.Fatal(err)
+			}
+			if err := CreateMediaLink(source, other, mode); err != nil {
+				t.Fatal(err)
+			}
+			ep := episodeModel.Episode{Season: 1, Number: 1, Name: "New title"}
+			content := epContentModel.EpisodeContent{Name: "release.mkv", FilePath: selected}
+			// Different torrent contents avoid the legacy target-name matching rule.
+			if err := DeleteSymlink(shows, "Show", ep, epContentModel.EpisodeContent{Name: "selected.mkv", FilePath: content.FilePath}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Lstat(selected); !os.IsNotExist(err) {
+				t.Fatalf("selected episode remains: %v", err)
+			}
+			if _, err := os.Lstat(other); err != nil {
+				t.Fatalf("other episode removed: %v", err)
+			}
+			if data, err := os.ReadFile(source); err != nil || string(data) != "video" {
+				t.Fatalf("download source changed: %q, %v", data, err)
+			}
+			if err := DeleteSymlink(shows, "Show", ep, epContentModel.EpisodeContent{Name: "selected.mkv", FilePath: content.FilePath}); err != nil {
+				t.Fatalf("repeated deletion failed: %v", err)
+			}
+		})
+	}
+}
