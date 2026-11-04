@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"github.com/jusoaresg/gorgon/internal/release_deletion"
 	"log/slog"
 
 	"github.com/jmoiron/sqlx"
@@ -12,7 +14,12 @@ import (
 	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
 )
 
+type DeletionCoordinator interface {
+	Delete(context.Context, release_deletion.Request) (release_deletion.Operation, error)
+}
+
 type Handler struct {
+	DeletionService    DeletionCoordinator
 	EpisodeRepo        episodeRepository.EpisodeRepositoryInterface
 	EpisodeContentRepo epContentRepository.EpisodeContentRepository
 	EpisodeTorrentRepo episodeTorrentRepository.EpisodeTorrentRepositoryInterface

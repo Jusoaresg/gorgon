@@ -7,7 +7,7 @@ type CheckTorrentResponse struct {
 	TimeActive  int     `json:"time_active"`
 	Completed   int     `json:"completed"`
 	CompletedOn int     `json:"completedon"`
-	ContentPath string  `json:"contentpath"`
+	ContentPath string  `json:"content_path"`
 	SavePath    string  `json:"save_path"`
 	Eta         int     `json:"eta"`
 	Hash        string  `json:"hash"`
