@@ -1,104 +1,144 @@
 package api
 
 import (
-	"log/slog"
+	"database/sql"
+	"errors"
+	"net/http"
 
-	"github.com/jusoaresg/gorgon/config"
-	"github.com/jusoaresg/gorgon/external/qbittorrent/service"
 	episodeEvents "github.com/jusoaresg/gorgon/internal/episode/events"
 	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
 	"github.com/jusoaresg/gorgon/internal/episode/schema"
-	epContentModel "github.com/jusoaresg/gorgon/internal/episode_content/model"
-	"github.com/jusoaresg/gorgon/pkg/schemas"
-	"github.com/jusoaresg/gorgon/utils"
-
+	"github.com/jusoaresg/gorgon/internal/release_deletion"
 	"github.com/labstack/echo/v4"
 )
 
-// @BasePath /api/v1
+type trackingResult struct {
+	EpisodeID int64                       `json:"episode_id"`
+	Status    string                      `json:"status"`
+	Operation *release_deletion.Operation `json:"operation,omitempty"`
+	Error     string                      `json:"error,omitempty"`
+}
 
-// @Summary Change Episodes Status
-// @Description Change Episodes Tracking Status
-// @Tags Database/Show/Episode
-// @Produce json
-// @Param request body schema.ChangeEpisodeTrackingRequest true "Request Body"
-// @Success 200 {object} schemas.DefaultResponse
-// @Failure 400 {object} schemas.ErrorResponse
-// @Failure 500 {object} schemas.ErrorResponse
-// @Router /database/show/episode/status [post]
+// ChangeEpisodeStatus preserves each installed release until the shared deletion
+// coordinator completes its requested tracking transition.
 func (h *Handler) ChangeEpisodeStatus(c echo.Context) error {
-	h.Logger.Info("Received request to Change Episode Status", slog.String("endpoint", "/database/show/episode/status"), slog.String("method", "post"))
-
 	var request schema.ChangeEpisodeTrackingRequest
-
 	if err := c.Bind(&request); err != nil {
-		schemas.SendError(c, 500, "Failed to bind body")
-		return err
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
 	}
+	switch request.Tracking {
+	case episodeModel.TrackingWanted, episodeModel.TrackingMissing, episodeModel.TrackingSkipped, episodeModel.TrackingDownloaded, episodeModel.TrackingSnatched:
+	default:
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid tracking value"})
+	}
+	if len(request.EpisodeIds) == 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Episode IDs are required"})
+	}
+	for _, id := range request.EpisodeIds {
+		if id <= 0 {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid episode ID"})
+		}
+	}
+	results := make([]trackingResult, 0, len(request.EpisodeIds))
+	allCompleted := true
+	pending := false
+	for _, id := range request.EpisodeIds {
+		result := h.changeTrackingTarget(c, int64(id), request.Tracking)
+		results = append(results, result)
+		if result.Status != "completed" {
+			allCompleted = false
+		}
+		if result.Status == "pending" || result.Status == "running" {
+			pending = true
+		}
+	}
+	status := http.StatusOK
+	message := "Tracking updated"
+	if !allCompleted {
+		status = http.StatusMultiStatus
+		message = "Some tracking changes are incomplete"
+		if len(results) == 1 && pending {
+			status = http.StatusAccepted
+		}
+	}
+	return c.JSON(status, map[string]any{"results": results, "toastMessage": message})
+}
 
-	qbittorrentService, err := service.NewQBittorrentService(h.Logger)
+func (h *Handler) changeTrackingTarget(c echo.Context, id int64, tracking string) trackingResult {
+	result := trackingResult{EpisodeID: id, Status: "failed"}
+	ep, err := h.EpisodeRepo.GetByID(id)
 	if err != nil {
-		h.Logger.Error("Failed to create qbittorrent service", slog.String("error", err.Error()))
+		result.Error = "Unable to load episode"
+		if errors.Is(err, sql.ErrNoRows) {
+			result.Status = "not_found"
+		}
+		return result
 	}
-
-	cfg, _ := config.LoadConfig()
-
-	episodes, err := h.EpisodeRepo.GetAllByID(utils.ToInt64Slice(request.EpisodeIds)...)
+	// Metadata-only transitions use one transaction, retaining active operation
+	// intentions even when a previous attempt has already removed the torrent.
+	tx, err := h.DB.Beginx()
 	if err != nil {
-		h.Logger.Error("Error while fetching episode from database", slog.String("error", err.Error()))
-		schemas.SendError(c, 500, "Error while fetching episode")
-		return err
+		result.Error = "Unable to inspect release"
+		return result
 	}
-
-	for _, episode := range episodes {
-		if request.Tracking != episodeModel.TrackingDownloaded {
-			show, err := h.ShowRepo.GetById(episode.ShowID)
-			if err == nil && cfg != nil {
-				episodeContents, err := h.EpisodeContentRepo.ListByEpisodeId(episode.ID)
-				if err == nil {
-					for _, ec := range episodeContents {
-						_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, episode, ec)
-						_ = h.EpisodeContentRepo.DeleteById(ec.ID)
-					}
-				}
-				_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, episode, epContentModel.EpisodeContent{})
-				_ = utils.CleanBrokenSymlinksInSeason(cfg.ShowsFolder, show.Name, episode.Season)
-			}
-		}
-
-		episodeTorrent, err := h.EpisodeTorrentRepo.GetByEpisodeID(episode.ID)
-		if err == nil && episodeTorrent.Hash != "" {
-			if qbittorrentService != nil {
-				err := qbittorrentService.DeleteTorrent(episodeTorrent.Hash, true)
-				if err != nil {
-					h.Logger.Error(
-						"Error while deleting torrent",
-						slog.String("error", err.Error()),
-						slog.Int64("episode_id", episode.ID),
-					)
-				}
-			}
-			if err := h.EpisodeTorrentRepo.DeleteByEpisodeID(episode.ID); err != nil {
-				h.Logger.Error(
-					"Error while deleting episode torrent",
-					slog.String("error", err.Error()),
-					slog.Int64("episode_id", episode.ID),
-				)
-			}
-		}
-		episode.Tracking = request.Tracking
-
-		if err := h.EpisodeRepo.Update(episode); err != nil {
-			schemas.SendError(c, 500, "Failed to update episode tracking status")
-			return err
-		}
-
-		episodeEvents.EmitEpisodeTrackingUpdatedEvent(episode.ID, episode.Tracking, "")
+	defer tx.Rollback()
+	var active release_deletion.Operation
+	err = tx.Get(&active, "SELECT * FROM release_deletion_operations WHERE episode_id=? AND status!='completed' ORDER BY created_at DESC LIMIT 1", id)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		result.Error = "Unable to inspect deletion operation"
+		return result
 	}
-
-	h.Logger.Info("Successfully updated episodes", slog.Any("Episodes", episodes))
-	schemas.SendSuccess(c, "Change episodes tracking", map[string]any{
-		"toastMessage": "Tracking updated",
-	})
-	return nil
+	hasActive := err == nil
+	var assets int
+	if err = tx.Get(&assets, "SELECT (SELECT count(*) FROM episode_torrents WHERE episode_id=?) + (SELECT count(*) FROM episode_contents WHERE episode_id=?)", id, id); err != nil {
+		result.Error = "Unable to inspect release"
+		return result
+	}
+	if hasActive || (assets > 0 && tracking != episodeModel.TrackingDownloaded) {
+		_ = tx.Rollback()
+		if tracking == episodeModel.TrackingDownloaded || tracking == episodeModel.TrackingSnatched {
+			result.Status = "conflict"
+			result.Error = "Installed releases cannot transition to this tracking value"
+			return result
+		}
+		svc := h.DeletionService
+		if svc == nil {
+			svc, err = release_deletion.New(h.DB, h.Logger)
+			if err != nil {
+				result.Error = "Torrent client is unavailable; episode was preserved"
+				return result
+			}
+		}
+		op, deleteErr := svc.Delete(c.Request().Context(), release_deletion.Request{EpisodeID: id, Intention: tracking})
+		result.Operation = &op
+		result.Status = op.Status
+		if deleteErr != nil {
+			result.Error = "Release deletion is incomplete; tracking was preserved"
+			if errors.Is(deleteErr, release_deletion.ErrConflict) {
+				result.Status = "conflict"
+			} else if result.Status == "" {
+				result.Status = "failed"
+			}
+			return result
+		}
+		if result.Status == "completed" {
+			episodeEvents.EmitEpisodeTrackingUpdatedEvent(id, tracking, "")
+		}
+		return result
+	}
+	if ep.Tracking != tracking {
+		if _, err = tx.Exec("UPDATE episodes SET tracking=? WHERE id=?", tracking, id); err != nil {
+			result.Error = "Unable to update tracking"
+			return result
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		result.Error = "Unable to update tracking"
+		return result
+	}
+	result.Status = "completed"
+	if ep.Tracking != tracking {
+		episodeEvents.EmitEpisodeTrackingUpdatedEvent(id, tracking, "")
+	}
+	return result
 }
