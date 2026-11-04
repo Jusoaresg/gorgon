@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -277,6 +276,9 @@ func (s *Service) prepare(r Request) (Operation, error) {
 		}
 		m.Files = append(m.Files, p)
 	}
+	if err = s.rejectSharedSources(r.EpisodeID, root, m.Files); err != nil {
+		return op, err
+	}
 	// A content directory is verified as a whole, including extra files. It is never recursively removed locally.
 	contentPath := torrent.ContentPath
 	if contentPath != "" {
@@ -345,7 +347,7 @@ func (s *Service) prepare(r Request) (Operation, error) {
 				return op, e
 			}
 			if info, e := os.Lstat(p); e == nil {
-				m.LinkIdentities[p] = fileIdentity(info)
+				m.LinkIdentities[p] = fileIdentity(p, info)
 			}
 			m.Links = append(m.Links, p)
 		}
@@ -386,12 +388,6 @@ func (s *Service) checkpoint(op *Operation, status, stage string, err error) err
 		s.notify(*op)
 	}
 	return e
-}
-func fileIdentity(info os.FileInfo) string {
-	if st, ok := info.Sys().(*syscall.Stat_t); ok {
-		return fmt.Sprintf("%d:%d", st.Dev, st.Ino)
-	}
-	return ""
 }
 
 func absent(path string) error {
@@ -478,7 +474,7 @@ func (s *Service) run(ctx context.Context, op Operation) (Operation, error) {
 			} else if err != nil && !os.IsNotExist(err) {
 				return fail(err)
 			}
-			if info, e := os.Lstat(p); e == nil && (m.LinkIdentities[p] == "" || fileIdentity(info) != m.LinkIdentities[p]) {
+			if info, e := os.Lstat(p); e == nil && (m.LinkIdentities[p] == "" || fileIdentity(p, info) != m.LinkIdentities[p]) {
 				return fail(ErrUnsafe)
 			}
 			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
