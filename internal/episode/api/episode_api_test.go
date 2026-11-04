@@ -1,14 +1,15 @@
 package api
 
 import (
+	"context"
 	"fmt"
+	"github.com/jusoaresg/gorgon/internal/release_deletion"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
 
-	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
 	episodeRepository "github.com/jusoaresg/gorgon/internal/episode/repository"
 	epContentRepository "github.com/jusoaresg/gorgon/internal/episode_content/repository"
 	episodeTorrentRepository "github.com/jusoaresg/gorgon/internal/episode_torrent/repository"
@@ -137,28 +138,25 @@ func TestGetShowEpisodes_MultipleEpisodes(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Result().StatusCode)
 }
 
+type deletionStub struct{ request release_deletion.Request }
+
+func (d *deletionStub) Delete(_ context.Context, r release_deletion.Request) (release_deletion.Operation, error) {
+	d.request = r
+	return release_deletion.Operation{ID: "operation", Status: "completed"}, nil
+}
 func TestDeleteDownloadedEpisode_Success(t *testing.T) {
 	h, epRepo, showRepo, seasonRepo := newEpisodeTestHandler()
 	_, epID := createEpisodeWithDeps(t, epRepo, showRepo, seasonRepo)
-
-	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/database/show/episode/%d", epID), nil)
+	stub := &deletionStub{}
+	h.DeletionService = stub
+	req := httptest.NewRequest(http.MethodDelete, "/", nil)
 	rec := httptest.NewRecorder()
 	c := echo.New().NewContext(req, rec)
 	c.SetParamNames("id")
 	c.SetParamValues(strconv.FormatInt(epID, 10))
-
-	err := h.DeleteDownloadedEpisode(c)
-	if err != nil {
-		t.Skip("Config file not available in test environment")
-		return
-	}
-	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, rec.Result().StatusCode)
-
-	ep, err := epRepo.GetByID(epID)
-	assert.NoError(t, err)
-	assert.Equal(t, episodeModel.TrackingSkipped, ep.Tracking)
+	assert.NoError(t, h.DeleteDownloadedEpisode(c))
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, epID, stub.request.EpisodeID)
+	assert.Equal(t, "skipped", stub.request.Intention)
+	assert.Contains(t, rec.Body.String(), "operation")
 }
-
-
-
