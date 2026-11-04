@@ -33,9 +33,11 @@ type Client interface {
 	GetContent(string) ([]cm.EpisodeContent, error)
 }
 type Request struct {
-	EpisodeID int64  `json:"episode_id"`
-	Hash      string `json:"hash"`
-	Intention string `json:"intention"`
+	EpisodeID          int64  `json:"episode_id"`
+	Hash               string `json:"hash"`
+	Intention          string `json:"intention"`
+	BlacklistReason    string `json:"blacklist_reason,omitempty"`
+	BlacklistExpiresAt *int64 `json:"blacklist_expires_at,omitempty"`
 }
 type Manifest struct {
 	LinkIdentities map[string]string `json:"link_identities"`
@@ -193,6 +195,9 @@ func (s *Service) prepare(r Request) (Operation, error) {
 				return op, err
 			}
 		}
+	}
+	if r.Intention == "blacklist" && r.EpisodeID == 0 {
+		return op, fmt.Errorf("%w: blacklisting requires a tracked episode", ErrUnsafe)
 	}
 	var ep em.Episode
 	if r.EpisodeID != 0 {
@@ -358,8 +363,38 @@ func (s *Service) prepare(r Request) (Operation, error) {
 	}
 	now := s.now().Unix()
 	op = Operation{ID: uuid.NewString(), Target: target, EpisodeID: r.EpisodeID, Hash: r.Hash, Intention: r.Intention, Status: "pending", Stage: "prepared", ManifestJSON: string(b), CreatedAt: now, UpdatedAt: now}
-	_, err = s.DB.NamedExec(`INSERT INTO release_deletion_operations (id,target,episode_id,hash,intention,status,stage,manifest,attempts,last_error,created_at,updated_at) VALUES (:id,:target,:episode_id,:hash,:intention,:status,:stage,:manifest,:attempts,:last_error,:created_at,:updated_at)`, op)
-	return op, err
+	query := `INSERT INTO release_deletion_operations (id,target,episode_id,hash,intention,status,stage,manifest,attempts,last_error,created_at,updated_at) VALUES (:id,:target,:episode_id,:hash,:intention,:status,:stage,:manifest,:attempts,:last_error,:created_at,:updated_at)`
+	if r.Intention != "blacklist" {
+		_, err = s.DB.NamedExec(query, op)
+		return op, err
+	}
+	tx, err := s.DB.Beginx()
+	if err != nil {
+		return op, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.NamedExec(query, op); err != nil {
+		return Operation{}, err
+	}
+	reason := r.BlacklistReason
+	if reason == "" {
+		reason = "manual blacklist"
+	}
+	result, err := tx.Exec(`INSERT INTO release_blacklist(show_id,episode_id,info_hash,release_title,indexer,reason,created_at,expires_at) SELECT ?,episode_id,hash,title,indexer,?,?,? FROM episode_torrents WHERE episode_id=? AND hash=? COLLATE NOCASE`, ep.ShowID, reason, now, r.BlacklistExpiresAt, r.EpisodeID, r.Hash)
+	if err != nil {
+		return Operation{}, err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return Operation{}, err
+	}
+	if count != 1 {
+		return Operation{}, ErrConflict
+	}
+	if err = tx.Commit(); err != nil {
+		return Operation{}, err
+	}
+	return op, nil
 }
 func (s *Service) checkpoint(op *Operation, status, stage string, err error) error {
 	op.Status = status
@@ -503,6 +538,9 @@ func (s *Service) run(ctx context.Context, op Operation) (Operation, error) {
 		tracking := op.Intention
 		if tracking == "blacklist" {
 			tracking = "wanted"
+			if _, err = tx.Exec("INSERT INTO release_replacement_searches(operation_id,episode_id) VALUES(?,?) ON CONFLICT(operation_id) DO NOTHING", op.ID, op.EpisodeID); err != nil {
+				return txFail(err)
+			}
 		}
 		if _, err = tx.Exec("UPDATE episodes SET tracking = ? WHERE id = ?", tracking, op.EpisodeID); err != nil {
 			return txFail(err)

@@ -1,7 +1,9 @@
 package jobs
 
 import (
+	"context"
 	"fmt"
+	"github.com/jusoaresg/gorgon/internal/release_deletion"
 	"log/slog"
 	"os"
 	"time"
@@ -11,12 +13,9 @@ import (
 	"github.com/jusoaresg/gorgon/external/qbittorrent/service"
 	telegramSchema "github.com/jusoaresg/gorgon/external/telegram/schema"
 	telegramService "github.com/jusoaresg/gorgon/external/telegram/service"
-	blacklistModel "github.com/jusoaresg/gorgon/internal/blacklist/model"
-	blacklistRepository "github.com/jusoaresg/gorgon/internal/blacklist/repository"
 	"github.com/jusoaresg/gorgon/internal/episode/events"
 	"github.com/jusoaresg/gorgon/internal/episode/model"
 	episodeRepository "github.com/jusoaresg/gorgon/internal/episode/repository"
-	episodeService "github.com/jusoaresg/gorgon/internal/episode/service"
 	epContentModel "github.com/jusoaresg/gorgon/internal/episode_content/model"
 	epContentRepository "github.com/jusoaresg/gorgon/internal/episode_content/repository"
 	episodeTorrentModel "github.com/jusoaresg/gorgon/internal/episode_torrent/model"
@@ -182,85 +181,13 @@ func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *servic
 		)
 
 		if shouldBlacklist {
-			logger.Warn(
-				"Blacklisting stalled or failed torrent and triggering re-search",
-				slog.Int64("episode_id", ep.ID),
-				slog.Int64("show_id", ep.ShowID),
-				slog.String("hash", episodeTorrent.Hash),
-				slog.String("title", episodeTorrent.Title),
-				slog.String("state", activeTorrent.State),
-				slog.String("reason", reason),
-			)
-
-			_ = qbittorrentService.DeleteTorrent(episodeTorrent.Hash, true)
-
-			releaseTitle := episodeTorrent.Title
-			if releaseTitle == "" {
-				releaseTitle = activeTorrent.Name
+			cfg, err := config.LoadConfig()
+			if err != nil {
+				return err
 			}
-
-			safeDB.Write.Lock()
-			blRepo := blacklistRepository.NewBlacklistRepository(safeDB.Db)
-			epIDCopy := ep.ID
-			_, _ = blRepo.Create(blacklistModel.ReleaseBlacklist{
-				ShowID:       ep.ShowID,
-				EpisodeID:    &epIDCopy,
-				InfoHash:     episodeTorrent.Hash,
-				ReleaseTitle: releaseTitle,
-				Indexer:      episodeTorrent.Indexer,
-				Reason:       reason,
-				CreatedAt:    now.Unix(),
-				ExpiresAt:    expiresAt,
-			})
-			_ = episodeTorrentRepo.DeleteByEpisodeID(ep.ID)
-			ep.Tracking = model.TrackingWanted
-			_ = episodeRepo.Update(*ep)
-			safeDB.Write.Unlock()
-
-			episode.EmitEpisodeTrackingUpdatedEvent(ep.ID, model.TrackingWanted, "")
-
-			showRepo := showRepository.NewShowRepository(safeDB.Db)
-			go func(epCopy model.Episode, relTitle, relURL, indexerName, blReason string) {
-				tgService, err := telegramService.NewTelegramService(logger)
-				if err != nil {
-					return
-				}
-				showName := ""
-				if s, err := showRepo.GetById(epCopy.ShowID); err == nil {
-					showName = s.Name
-				}
-				if err := tgService.SendReleaseBlacklisted(telegramSchema.ReleaseBlacklistedTemplateInput{
-					ShowName:     showName,
-					Season:       epCopy.Season,
-					Episode:      epCopy.Number,
-					EpisodeTitle: epCopy.Name,
-					ReleaseTitle: relTitle,
-					ReleaseURL:   relURL,
-					Indexer:      indexerName,
-					Reason:       blReason,
-				}); err != nil {
-					logger.Error("failed to send telegram blacklist notification", slog.String("error", err.Error()))
-				}
-			}(*ep, releaseTitle, episodeTorrent.InfoUrl, episodeTorrent.Indexer, reason)
-
-			searchSvc := episodeService.NewEpisodeSearchService(
-				safeDB.Db,
-				logger,
-				&episodeService.EpisodeSearcher{},
-				episodeService.NewEpisodeDownloader(safeDB.Db),
-				episodeRepo,
-				showRepo,
-			)
-			go func(episodeID int) {
-				if err := searchSvc.ProcessSingleEpisode(episodeID); err != nil {
-					logger.Error("Failed to re-search episode after blacklisting stalled torrent",
-						slog.Int("episode_id", episodeID),
-						slog.String("error", err.Error()),
-					)
-				}
-			}(int(ep.ID))
-
-			return nil
+			deletion := release_deletion.NewWithOptions(safeDB.Db, logger, release_deletion.Options{Client: qbittorrentService, DownloadRoot: cfg.QBittorrentDownloadFolder, ShowsRoot: cfg.ShowsFolder})
+			_, err = deletion.Delete(context.Background(), release_deletion.Request{EpisodeID: ep.ID, Hash: episodeTorrent.Hash, Intention: "blacklist", BlacklistReason: reason, BlacklistExpiresAt: expiresAt})
+			return err
 		}
 
 		if nextStalledSince != episodeTorrent.StalledSince || nextAmountLeft != episodeTorrent.LastAmountLeft {

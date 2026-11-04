@@ -16,17 +16,14 @@ import (
 	qbittorrentService "github.com/jusoaresg/gorgon/external/qbittorrent/service"
 	"github.com/jusoaresg/gorgon/external/telegram/schema"
 	tvMazeService "github.com/jusoaresg/gorgon/external/tvmaze/service"
-	blacklistModel "github.com/jusoaresg/gorgon/internal/blacklist/model"
-	blacklistRepository "github.com/jusoaresg/gorgon/internal/blacklist/repository"
 	downloadsService "github.com/jusoaresg/gorgon/internal/downloads/service"
 	episodeEvents "github.com/jusoaresg/gorgon/internal/episode/events"
 	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
 	episodeRepository "github.com/jusoaresg/gorgon/internal/episode/repository"
-	epContentModel "github.com/jusoaresg/gorgon/internal/episode_content/model"
-	epContentRepository "github.com/jusoaresg/gorgon/internal/episode_content/repository"
 	episodeTorrentRepository "github.com/jusoaresg/gorgon/internal/episode_torrent/repository"
 	filterSettingsModel "github.com/jusoaresg/gorgon/internal/filter_settings/model"
 	filterSettingsRepository "github.com/jusoaresg/gorgon/internal/filter_settings/repository"
+	"github.com/jusoaresg/gorgon/internal/release_deletion"
 	seasonRepository "github.com/jusoaresg/gorgon/internal/season/repository"
 	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
 	showManager "github.com/jusoaresg/gorgon/internal/show/service"
@@ -35,7 +32,6 @@ import (
 	showSettingsRepository "github.com/jusoaresg/gorgon/internal/show_settings/repository"
 	"github.com/jusoaresg/gorgon/pkg/schemas/dtos"
 	"github.com/jusoaresg/gorgon/pkg/services"
-	"github.com/jusoaresg/gorgon/utils"
 )
 
 // EpisodeSearchTrigger decouples Telegram remote control from internal/episode/service.
@@ -1502,127 +1498,44 @@ func handleBotCallback(
 }
 
 func blacklistEpisodeFromBot(
-	client *TelegramService,
-	token, chatID string,
-	db *sqlx.DB,
-	episodeID int64,
-	searchTrigger EpisodeSearchTrigger,
-	logger *slog.Logger,
+	client *TelegramService, token, chatID string, db *sqlx.DB, episodeID int64,
+	searchTrigger EpisodeSearchTrigger, logger *slog.Logger,
 ) {
-	epRepo := episodeRepository.NewEpisodeRepository(db)
-	epTorrentRepo := episodeTorrentRepository.NewEpisodeTorrentRepository(db)
-	showRepo := showRepository.NewShowRepository(db)
-
-	episode, err := epRepo.GetByID(episodeID)
+	// The durable scheduler handoff owns replacement search, including restart recovery.
+	svc, err := release_deletion.New(db, logger)
 	if err != nil {
-		_ = client.SendMessage(token, chatID, "⚠️ Episode not found.")
+		_ = client.SendMessage(token, chatID, "⚠️ Torrent client unavailable; release was preserved.")
 		return
 	}
-
-	epTorr, err := epTorrentRepo.GetByEpisodeID(episodeID)
+	op, err := svc.Delete(context.Background(), release_deletion.Request{EpisodeID: episodeID, Intention: "blacklist", BlacklistReason: "telegram remote blacklist"})
 	if err != nil {
-		_ = client.SendMessage(token, chatID, "⚠️ No active release found for this episode.")
+		_ = client.SendMessage(token, chatID, "⚠️ Blacklist cleanup is incomplete. Operation: "+op.ID)
 		return
 	}
-
-	if qbit, err := qbittorrentService.NewQBittorrentService(logger); err == nil && epTorr.Hash != "" {
-		_ = qbit.DeleteTorrent(epTorr.Hash, true)
+	if op.Status != "completed" {
+		_ = client.SendMessage(token, chatID, "Blacklist cleanup is in progress. Operation: "+op.ID)
+		return
 	}
-
-	blRepo := blacklistRepository.NewBlacklistRepository(db)
-	epIDCopy := episode.ID
-	_, _ = blRepo.Create(blacklistModel.ReleaseBlacklist{
-		ShowID:       episode.ShowID,
-		EpisodeID:    &epIDCopy,
-		InfoHash:     epTorr.Hash,
-		ReleaseTitle: epTorr.Title,
-		Indexer:      epTorr.Indexer,
-		Reason:       "telegram remote blacklist",
-		CreatedAt:    time.Now().Unix(),
-	})
-
-	_ = epTorrentRepo.DeleteByEpisodeID(episode.ID)
-	episode.Tracking = episodeModel.TrackingWanted
-	if err := epRepo.Update(episode); err == nil {
-		episodeEvents.EmitEpisodeTrackingUpdatedEvent(episode.ID, episode.Tracking, "")
-	}
-
-	showName := ""
-	if show, err := showRepo.GetById(episode.ShowID); err == nil {
-		showName = show.Name
-	}
-
-	msg := schema.FormatReleaseBlacklisted(schema.ReleaseBlacklistedTemplateInput{
-		ShowName:     showName,
-		Season:       episode.Season,
-		Episode:      episode.Number,
-		EpisodeTitle: episode.Name,
-		ReleaseTitle: epTorr.Title,
-		ReleaseURL:   epTorr.InfoUrl,
-		Indexer:      epTorr.Indexer,
-		Reason:       "telegram remote blacklist",
-	})
-	var markup *schema.InlineKeyboardMarkup
-	if epTorr.InfoUrl != "" && (strings.HasPrefix(epTorr.InfoUrl, "http://") || strings.HasPrefix(epTorr.InfoUrl, "https://")) {
-		markup = &schema.InlineKeyboardMarkup{
-			InlineKeyboard: [][]schema.InlineKeyboardButton{
-				{
-					{
-						Text: "🔗 View Release",
-						URL:  epTorr.InfoUrl,
-					},
-				},
-			},
-		}
-	}
-	_ = client.SendMessageWithMarkup(token, chatID, msg, markup)
-
-	if searchTrigger != nil {
-		go func(id int) {
-			_ = searchTrigger.ProcessSingleEpisode(id)
-		}(int(episode.ID))
-	}
+	_ = client.SendMessage(token, chatID, "Release blacklisted; replacement search queued. Operation: "+op.ID)
 }
 
 func removeDownloadFromBot(
-	client *TelegramService,
-	token, chatID string,
-	db *sqlx.DB,
-	hash string,
-	logger *slog.Logger,
-	editMsgID ...int64,
+	client *TelegramService, token, chatID string, db *sqlx.DB, hash string, logger *slog.Logger, editMsgID ...int64,
 ) {
-	if qbit, err := qbittorrentService.NewQBittorrentService(logger); err == nil {
-		_ = qbit.DeleteTorrent(hash, true)
+	svc, err := release_deletion.New(db, logger)
+	if err != nil {
+		_ = client.SendMessage(token, chatID, "⚠️ Torrent client unavailable; download was preserved.")
+		return
 	}
-
-	epTorrentRepo := episodeTorrentRepository.NewEpisodeTorrentRepository(db)
-	epRepo := episodeRepository.NewEpisodeRepository(db)
-	showRepo := showRepository.NewShowRepository(db)
-	epContentRepo := epContentRepository.NewEpisodeContentRepository(db)
-
-	if epTorr, err := epTorrentRepo.GetByHash(hash); err == nil && epTorr.EpisodeId != 0 {
-		_ = epTorrentRepo.DeleteByEpisodeID(epTorr.EpisodeId)
-		if ep, err := epRepo.GetByID(epTorr.EpisodeId); err == nil {
-			if cfg, err := config.LoadConfig(); err == nil {
-				if show, err := showRepo.GetById(ep.ShowID); err == nil {
-					if contents, err := epContentRepo.ListByEpisodeId(ep.ID); err == nil {
-						for _, ec := range contents {
-							_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, ep, ec)
-							_ = epContentRepo.DeleteById(ec.ID)
-						}
-					}
-					_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, ep, epContentModel.EpisodeContent{})
-					_ = utils.CleanBrokenSymlinksInSeason(cfg.ShowsFolder, show.Name, ep.Season)
-				}
-			}
-			ep.Tracking = episodeModel.TrackingSkipped
-			if err := epRepo.Update(ep); err == nil {
-				episodeEvents.EmitEpisodeTrackingUpdatedEvent(ep.ID, ep.Tracking, "")
-			}
-		}
+	op, err := svc.Delete(context.Background(), release_deletion.Request{Hash: hash, Intention: "skipped"})
+	if err != nil {
+		_ = client.SendMessage(token, chatID, "⚠️ Download deletion is incomplete. Operation: "+op.ID)
+		return
 	}
-
+	if op.Status != "completed" {
+		_ = client.SendMessage(token, chatID, "Download deletion is in progress. Operation: "+op.ID)
+		return
+	}
 	sendDownloadsStatus(client, token, chatID, db, logger, editMsgID...)
 }
 
