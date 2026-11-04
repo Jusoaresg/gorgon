@@ -109,7 +109,7 @@ func (h *Handler) changeTrackingTarget(c echo.Context, id int64, tracking string
 				return result
 			}
 		}
-		op, deleteErr := svc.Delete(c.Request().Context(), release_deletion.Request{EpisodeID: id, Intention: tracking})
+		op, deleteErr := release_deletion.Dispatch(c.Request().Context(), svc, release_deletion.Request{EpisodeID: id, Intention: tracking})
 		result.Operation = &op
 		result.Status = op.Status
 		if deleteErr != nil {

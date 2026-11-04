@@ -1,12 +1,10 @@
 package api
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/jusoaresg/gorgon/internal/release_deletion"
-	"github.com/jusoaresg/gorgon/pkg/schemas"
 	"github.com/labstack/echo/v4"
 )
 
@@ -23,17 +21,6 @@ func (h *Handler) DeleteDownloadedEpisode(c echo.Context) error {
 			return c.JSON(http.StatusServiceUnavailable, map[string]any{"error": "Torrent client is unavailable; episode was preserved"})
 		}
 	}
-	op, err := svc.Delete(c.Request().Context(), release_deletion.Request{EpisodeID: id, Intention: "skipped"})
-	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, release_deletion.ErrConflict) {
-			status = http.StatusConflict
-		}
-		if errors.Is(err, release_deletion.ErrUnsafe) {
-			status = http.StatusUnprocessableEntity
-		}
-		return c.JSON(status, map[string]any{"operation": op, "error": "Episode deletion is incomplete; original tracking and recovery context were preserved"})
-	}
-	schemas.SendSuccess(c, "Delete Downloaded Episode", map[string]any{"toastMessage": "Episode deleted", "operation": op})
-	return nil
+	op, err := release_deletion.Dispatch(c.Request().Context(), svc, release_deletion.Request{EpisodeID: id, Intention: "skipped"})
+	return c.JSON(release_deletion.HTTPStatus(op, err), release_deletion.Response(op, err))
 }

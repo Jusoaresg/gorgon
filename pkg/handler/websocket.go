@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	_ "github.com/gorilla/websocket"
@@ -57,6 +58,7 @@ func SendWebSocketMessage(message any) {
 	defer mutex.Unlock()
 
 	for client := range clients {
+		_ = client.SetWriteDeadline(time.Now().Add(250 * time.Millisecond))
 		if err := client.WriteJSON(message); err != nil {
 			logger.Error("error while sending websocket message", slog.Any("Message", message), slog.Any("Client", client))
 			client.Close()
