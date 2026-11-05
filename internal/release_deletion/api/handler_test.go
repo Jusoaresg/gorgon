@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jusoaresg/gorgon/internal/release_deletion"
+	"github.com/jusoaresg/gorgon/internal/release_guard"
 	"github.com/jusoaresg/gorgon/testutils"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
@@ -47,4 +48,27 @@ func TestPersistedQueryAndManagedRetryContracts(t *testing.T) {
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/operations/missing", nil))
 	require.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestRetryRespondsPromptlyWhenReleaseMutationIsBusy(t *testing.T) {
+	db := testutils.GetTestDB()
+	t.Cleanup(func() { db.Close() })
+	svc := release_deletion.NewWithOptions(db, nil, release_deletion.Options{})
+	op, err := svc.Submit(context.Background(), release_deletion.Request{Hash: "unimported", Intention: "skipped"})
+	require.NoError(t, err)
+	_, err = db.Exec("UPDATE release_deletion_operations SET status='failed',retry_count=5 WHERE id=?", op.ID)
+	require.NoError(t, err)
+	unlock := release_guard.Lock(db)
+	defer unlock()
+	h := &Handler{DB: db}
+	e := echo.New()
+	e.POST("/operations/:id/retry", h.Retry)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/operations/"+op.ID+"/retry", nil))
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Contains(t, rec.Body.String(), "deletion_busy")
+	stored, err := svc.Get(op.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", stored.Status)
+	require.Equal(t, 5, stored.RetryCount)
 }

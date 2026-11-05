@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jusoaresg/gorgon/internal/release_guard"
 )
 
 // Coordinator permits contract tests and alternate entry points to delegate to
@@ -112,6 +113,13 @@ func (s *Service) SubmitRetry(ctx context.Context, id string) (Operation, error)
 	if err := ctx.Err(); err != nil {
 		return Operation{}, err
 	}
+	// Workers hold the mutation gate while hydrating queued requests, before
+	// their persisted status becomes running. Never reset that worker's snapshot.
+	unlock, ok := release_guard.TryLock(s.DB)
+	if !ok {
+		return Operation{}, release_guard.ErrBusy
+	}
+	defer unlock()
 	// This atomic transition never rewinds an executing operation or completed result.
 	_, err := s.DB.ExecContext(ctx, `UPDATE release_deletion_operations SET status='pending',retry_count=0,next_attempt_at=0,last_error='',updated_at=?,version=version+1 WHERE id=? AND status='failed' AND intention!='upgrade'`, s.now().Unix(), id)
 	if err != nil {
@@ -127,6 +135,9 @@ func (s *Service) SubmitRetry(ctx context.Context, id string) (Operation, error)
 	return op, err
 }
 func HTTPStatus(op Operation, err error) int {
+	if errors.Is(err, release_guard.ErrBusy) {
+		return http.StatusServiceUnavailable
+	}
 	if errors.Is(err, ErrConflict) {
 		return http.StatusConflict
 	}
@@ -154,6 +165,9 @@ func Response(op Operation, err error) map[string]any {
 	message := "Release deletion accepted; cleanup is pending"
 	code := "deletion_pending"
 	switch {
+	case errors.Is(err, release_guard.ErrBusy):
+		message = "Release cleanup is busy; retry shortly"
+		code = "deletion_busy"
 	case errors.Is(err, ErrConflict):
 		message = "Another deletion operation has a conflicting intention"
 		code = "deletion_conflict"
