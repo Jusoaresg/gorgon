@@ -227,6 +227,9 @@ func ProcessSingleSnatchedDownloadWithDB(db *sqlx.DB, ep *model.Episode, qbittor
 		)
 
 		if shouldBlacklist {
+			if upgrading {
+				return fmt.Errorf("upgrade candidate stalled; keep the existing release and repair or retry the candidate before cleanup")
+			}
 			cfg, err := config.LoadConfig()
 			if err != nil {
 				return err
