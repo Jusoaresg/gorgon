@@ -126,7 +126,16 @@ func TestRetryDuringQueuedHydrationCannotBeOverwrittenByWorker(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("worker did not start metadata request")
 	}
-	_, retryErr := s.SubmitRetry(context.Background(), op.ID)
+	retryResult := make(chan error, 1)
+	go func() { _, err := s.SubmitRetry(context.Background(), op.ID); retryResult <- err }()
+	var retryErr error
+	select {
+	case retryErr = <-retryResult:
+	case <-time.After(time.Second):
+		close(release)
+		<-done
+		t.Fatal("retry submission waited on the torrent client")
+	}
 	close(release)
 	<-done
 	require.ErrorIs(t, retryErr, release_guard.ErrBusy)
