@@ -17,16 +17,17 @@
         var previous = state.operations[op.id];
         if (previous && Number(previous.version) >= Number(op.version)) return null;
         state.operations[op.id] = op;
-        var target = op.target || (op.episode_id ? 'episode:' + op.episode_id : op.hash ? 'hash:' + op.hash : op.id);
+        var target = op.episode_id ? 'episode:' + op.episode_id : op.target || (op.hash ? 'hash:' + op.hash : op.id);
         var latest = state.latest[target];
         var current = !latest || latest.id === op.id || Number(op.created_at || 0) > Number(latest.created_at || 0);
         if (current) state.latest[target] = op;
-        var changed = !previous || previous.status !== op.status;
+        var changed = !previous || description(previous).message !== description(op).message;
         return { operation: op, current: current, notification: current && state.followed[op.id] && changed ? description(op) : null };
     }
     function attach(notify, updateEpisode) {
         var state = createState();
         var targets = {};
+        var notifiedBatches = {};
         try { targets = JSON.parse(sessionStorage.getItem('release-deletion-targets') || '{}'); } catch (e) {}
         function remember(key) { if (!key) return; targets[key] = true; try { sessionStorage.setItem('release-deletion-targets', JSON.stringify(targets)); } catch (e) {} }
         function key(op) { return op.episode_id ? 'episode:' + op.episode_id : 'hash:' + op.hash; }
@@ -85,14 +86,25 @@
         function consumeResponse(response) {
             var data = response.data; if (Array.isArray(data)) data = data[0];
             if ((response.operation && response.operation.id) || (data && data.operation && data.operation.id)) { consume(response.operation || data.operation, true); return true; }
-            if (response.results) { var found = false; response.results.forEach(function (result) { if (result.operation && result.operation.id) { consume(result.operation, true); found = true; } }); return found; }
+            if (response.results) {
+                var found = false;
+                response.results.forEach(function (result) { if (result.operation && result.operation.id) { consume(result.operation, true); found = true; } });
+                if (found) {
+                    var batchKey = JSON.stringify(response.results);
+                    if (!notifiedBatches[batchKey]) response.results.forEach(function (result) {
+                        if (result.error) notify('Episode ' + result.episode_id + ': ' + result.error, 'error');
+                    });
+                    notifiedBatches[batchKey] = true;
+                }
+                return found;
+            }
             return false;
         }
         function refresh() {
             return fetch('/api/v1/release-deletions').then(function (response) { if (!response.ok) throw new Error('query failed'); return response.json(); }).then(function (data) {
                 // Render older operations first so the newest request for a target wins.
                 (data.operations || []).slice().reverse().forEach(function (op) { consume(op, false, false); });
-                (data.operations || []).forEach(function (op) { var latest = state.latest[op.target || key(op)]; if (latest && latest.id === op.id && op.episode_id && op.current_tracking) updateEpisode(op.episode_id, op.current_tracking, ''); });
+                (data.operations || []).forEach(function (op) { var latest = state.latest[op.episode_id ? key(op) : op.target || key(op)]; if (latest && latest.id === op.id && op.episode_id && op.current_tracking) updateEpisode(op.episode_id, op.current_tracking, ''); });
             }).catch(function () {});
         }
         function reapply() { Object.values(state.latest).forEach(render); }

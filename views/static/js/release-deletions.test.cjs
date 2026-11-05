@@ -74,3 +74,29 @@ test('search actions do not subscribe to unrelated deletion broadcasts',async()=
   assert.equal(browser.notifications.length,0);assert.equal(browser.monitor.consumeResponse({operation:{}}),false);
  }finally{browser.restore();}
 });
+
+test('older release completion cannot overwrite a newer deletion on the same episode',()=>{
+ const state=deletion.createState();deletion.follow(state,'old');
+ deletion.apply(state,{id:'new',target:'hash:new',hash:'new',episode_id:1,status:'pending',version:1,created_at:20});
+ const late=deletion.apply(state,{id:'old',target:'hash:old',hash:'old',episode_id:1,status:'completed',version:9,created_at:10});
+ assert.equal(late.current,false);assert.equal(late.notification,null);
+});
+
+test('scheduled retry is pending and exhaustion produces an actionable failure notification',()=>{
+ const state=deletion.createState();deletion.follow(state,'retry');
+ const pending=deletion.apply(state,{id:'retry',status:'failed',next_attempt_at:123,retryable:true,version:2});
+ assert.equal(pending.notification.type,'info');assert.match(pending.notification.message,/automatic retry/);
+ const exhausted=deletion.apply(state,{id:'retry',status:'failed',next_attempt_at:0,retryable:true,version:3});
+ assert.equal(exhausted.notification.type,'error');
+});
+
+test('mixed batch preserves individual failures alongside accepted deletion and deduplicates response',async()=>{
+ const browser=browserFixture([]);
+ try {
+  await browser.monitor.refresh();
+  const response={results:[{episode_id:1,status:'pending',operation:{id:'accepted',episode_id:1,status:'pending',version:1}},{episode_id:2,status:'failed',error:'Ownership could not be verified'}]};
+  assert.equal(browser.monitor.consumeResponse(response),true);
+  assert.ok(browser.notifications.some(note=>note.type==='error' && /Episode 2/.test(note.message)));
+  const count=browser.notifications.length;browser.monitor.consumeResponse(response);assert.equal(browser.notifications.length,count);
+ }finally{browser.restore();}
+});

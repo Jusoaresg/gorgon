@@ -83,3 +83,18 @@ func TestQueuedBlacklistPreservesReasonExpiryAndCapturesBeforeEffects(t *testing
 	require.NoError(t, db.Get(&count, "SELECT count(*) FROM release_replacement_searches WHERE operation_id=?", op.ID))
 	require.Equal(t, 1, count)
 }
+
+func TestAcceptedSubmissionSurvivesRequestCancellationAndWorkerRestart(t *testing.T) {
+	s, _, _, _, deleteFiles := fixture(t)
+	*deleteFiles = true
+	requestContext, cancel := context.WithCancel(context.Background())
+	op, err := s.Submit(requestContext, Request{EpisodeID: 1, Intention: "skipped"})
+	require.NoError(t, err)
+	cancel()
+	restarted := NewWithOptions(s.DB, s.Logger, s.Options)
+	require.NoError(t, restarted.RecoverDue(context.Background(), time.Now()))
+	result, err := restarted.Get(op.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Equal(t, op.ID, result.ID)
+}
