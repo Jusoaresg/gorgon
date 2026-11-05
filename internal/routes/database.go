@@ -12,6 +12,7 @@ import (
 	filterSettingsApi "github.com/jusoaresg/gorgon/internal/filter_settings/api"
 	"github.com/jusoaresg/gorgon/internal/indexer"
 	indexerApi "github.com/jusoaresg/gorgon/internal/indexer/api"
+	deletionApi "github.com/jusoaresg/gorgon/internal/release_deletion/api"
 	"github.com/jusoaresg/gorgon/internal/season"
 	seasonApi "github.com/jusoaresg/gorgon/internal/season/api"
 	"github.com/jusoaresg/gorgon/internal/show"
@@ -36,6 +37,10 @@ func SetupDatabaseRouter(v1 *echo.Group, deps *show.Dependencies, episodeDeps *e
 	showSettingsHandler := showSettingsApi.NewHandler(showSettingsDeps)
 	filterSettingsHandler := filterSettingsApi.NewHandler(filterSettingsDeps)
 
+	deletionHandler := &deletionApi.Handler{DB: episodeDeps.DB, Logger: logger}
+	v1.GET("release-deletions", deletionHandler.List)
+	v1.GET("release-deletions/:id", deletionHandler.Get)
+	v1.POST("release-deletions/:id/retry", deletionHandler.Retry)
 	listGroup := v1.Group("database/")
 	{
 		showGroup := listGroup.Group("show")

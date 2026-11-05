@@ -3,6 +3,8 @@
 
     var WS_URL = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/v1/ws';
 
+    var deletionMonitor;
+
     var TRACKING_CLASSES = ['wanted', 'missing', 'skipped', 'snatched', 'downloaded'];
 
     var TRACKING_LABELS = {
@@ -337,11 +339,12 @@
 
         try {
             var response = JSON.parse(event.detail.xhr.response);
+            if (deletionMonitor && deletionMonitor.consumeResponse(response)) return;
             var data = response.data;
             if (Array.isArray(data)) {
                 data = data[0];
             }
-            message = (data && data.toastMessage) || response.message || null;
+            message = (data && data.toastMessage) || response.toastMessage || response.error || response.message || null;
         } catch (e) {
             message = null;
         }
@@ -402,6 +405,8 @@
                 return;
             }
 
+            if (message && message.type === 'ReleaseDeletionUpdated' && deletionMonitor) deletionMonitor.consume(message.operation, false);
+
             if (message && message.type === 'EpisodeTrackingUpdated') {
                 updateEpisode(message.episodeID, message.tracking, message.infoUrl);
             }
@@ -410,6 +415,8 @@
                 onSearchFinished(message);
             }
         };
+
+        socket.onopen = function () { if (deletionMonitor) deletionMonitor.refresh(); };
 
         socket.onclose = function () {
             setTimeout(connect, 3000);
@@ -1068,6 +1075,7 @@
     }
 
     function init() {
+        if (window.ReleaseDeletions) deletionMonitor = window.ReleaseDeletions.attach(displayToast, updateEpisode);
         connect();
         initSidebar();
         initTimezoneSelect();

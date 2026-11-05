@@ -161,7 +161,7 @@ func (h *Handler) RemoveDownload(c echo.Context) error {
 			return c.JSON(http.StatusServiceUnavailable, map[string]any{"error": "Torrent client is unavailable; download was preserved"})
 		}
 	}
-	op, err := svc.Delete(c.Request().Context(), release_deletion.Request{Hash: hash, Intention: "skipped"})
+	op, err := release_deletion.Dispatch(c.Request().Context(), svc, release_deletion.Request{Hash: hash, Intention: "skipped"})
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, release_deletion.ErrConflict) {
@@ -193,7 +193,7 @@ func (h *Handler) BlacklistDownload(c echo.Context) error {
 			return c.JSON(http.StatusServiceUnavailable, map[string]any{"error": "Torrent client is unavailable; release was preserved"})
 		}
 	}
-	op, err := svc.Delete(c.Request().Context(), release_deletion.Request{Hash: hash, Intention: "blacklist", BlacklistReason: "manual blacklist"})
+	op, err := release_deletion.Dispatch(c.Request().Context(), svc, release_deletion.Request{Hash: hash, Intention: "blacklist", BlacklistReason: "manual blacklist"})
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, release_deletion.ErrConflict) {

@@ -48,6 +48,7 @@ type Manifest struct {
 	ShowsRoot      string            `json:"shows_root"`
 }
 type Operation struct {
+	Version       int64  `db:"version" json:"version"`
 	NextAttemptAt int64  `db:"next_attempt_at" json:"next_attempt_at"`
 	RetryCount    int    `db:"retry_count" json:"retry_count"`
 	Retryable     bool   `db:"retryable" json:"retryable"`
@@ -92,6 +93,17 @@ func New(db *sqlx.DB, logger *slog.Logger) (*Service, error) {
 	return NewWithOptions(db, logger, Options{Client: client, DownloadRoot: cfg.QBittorrentDownloadFolder, ShowsRoot: cfg.ShowsFolder}), nil
 }
 func NewWithOptions(db *sqlx.DB, logger *slog.Logger, o Options) *Service {
+	if o.DownloadRoot != "" {
+		if absolute, err := filepath.Abs(o.DownloadRoot); err == nil {
+			o.DownloadRoot = absolute
+		}
+	}
+	if o.ShowsRoot != "" {
+		if absolute, err := filepath.Abs(o.ShowsRoot); err == nil {
+			o.ShowsRoot = absolute
+		}
+	}
+
 	if o.ConfirmationTimeout <= 0 {
 		o.ConfirmationTimeout = 2 * time.Second
 	}
@@ -182,7 +194,7 @@ func (s *Service) prepare(r Request) (Operation, error) {
 			// Finalization removes associations. Preserve request identity for retries
 			// after completion or a lost response, without guessing an episode.
 			err := s.DB.Get(&op, "SELECT * FROM release_deletion_operations WHERE target = ? ORDER BY created_at DESC, rowid DESC LIMIT 1", "hash:"+r.Hash)
-			if err == nil {
+			if err == nil && op.Stage != "queued" {
 				if op.Intention != r.Intention {
 					return op, ErrConflict
 				}
@@ -196,7 +208,7 @@ func (s *Service) prepare(r Request) (Operation, error) {
 				if len(torrents) == 0 {
 					return op, nil
 				}
-			} else if !errors.Is(err, sql.ErrNoRows) {
+			} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return op, err
 			}
 		}
@@ -231,13 +243,18 @@ func (s *Service) prepare(r Request) (Operation, error) {
 	}
 	target := "hash:" + r.Hash
 	err := s.DB.Get(&op, "SELECT * FROM release_deletion_operations WHERE target = ? AND status != 'completed'", target)
+	var queued *Operation
 	if err == nil {
 		if op.Intention != r.Intention || op.EpisodeID != r.EpisodeID {
 			return op, ErrConflict
 		}
-		return op, nil
+		if op.Stage != "queued" {
+			return op, nil
+		}
+		copy := op
+		queued = &copy
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return op, err
 	}
 	var ids []int64
@@ -251,6 +268,26 @@ func (s *Service) prepare(r Request) (Operation, error) {
 	var torrents []qs.CheckTorrentResponse
 	if err = s.Options.Client.CheckTorrentsWithHash("", r.Hash, &torrents); err != nil {
 		return op, err
+	}
+	if len(torrents) == 0 && queued != nil {
+		var prior Operation
+		e := s.DB.Get(&prior, "SELECT * FROM release_deletion_operations WHERE target=? AND status='completed' ORDER BY created_at DESC,id DESC LIMIT 1", target)
+		if e == nil {
+			var previous Manifest
+			e = json.Unmarshal([]byte(prior.ManifestJSON), &previous)
+			if e == nil && previous.DownloadRoot == filepath.Clean(s.Options.DownloadRoot) && previous.ShowsRoot == s.Options.ShowsRoot {
+				for _, p := range append(append(append([]string{}, previous.Files...), previous.Directories...), previous.Links...) {
+					if err := absent(p); err != nil {
+						return op, fmt.Errorf("%w: completed target has unexpected remaining paths", ErrUnsafe)
+					}
+				}
+				queued.ManifestJSON = prior.ManifestJSON
+				queued.Stage = "confirming"
+				queued.Version++
+				_, e = s.DB.Exec("UPDATE release_deletion_operations SET manifest=?,stage='confirming',version=version+1 WHERE id=?", queued.ManifestJSON, queued.ID)
+				return *queued, e
+			}
+		}
 	}
 	if len(torrents) != 1 || !strings.EqualFold(torrents[0].Hash, r.Hash) {
 		return op, fmt.Errorf("%w: torrent metadata unavailable", ErrUnsafe)
@@ -367,18 +404,31 @@ func (s *Service) prepare(r Request) (Operation, error) {
 		return op, err
 	}
 	now := s.now().Unix()
-	op = Operation{ID: uuid.NewString(), Target: target, EpisodeID: r.EpisodeID, Hash: r.Hash, Intention: r.Intention, Status: "pending", Stage: "prepared", ManifestJSON: string(b), CreatedAt: now, UpdatedAt: now}
-	query := `INSERT INTO release_deletion_operations (id,target,episode_id,hash,intention,status,stage,manifest,attempts,last_error,created_at,updated_at) VALUES (:id,:target,:episode_id,:hash,:intention,:status,:stage,:manifest,:attempts,:last_error,:created_at,:updated_at)`
+	op = Operation{ID: uuid.NewString(), Target: target, EpisodeID: r.EpisodeID, Hash: r.Hash, Intention: r.Intention, Status: "pending", Stage: "prepared", ManifestJSON: string(b), CreatedAt: s.now().UnixMicro(), UpdatedAt: now}
+	if queued != nil {
+		op.ID = queued.ID
+		op.CreatedAt = queued.CreatedAt
+		op.Version = queued.Version + 1
+		op.Attempts = queued.Attempts
+		op.RetryCount = queued.RetryCount
+	}
+	persist := func(exec sqlx.Ext) error {
+		if queued != nil {
+			_, e := exec.Exec("UPDATE release_deletion_operations SET manifest=?,stage='prepared',version=version+1 WHERE id=? AND stage='queued'", op.ManifestJSON, op.ID)
+			return e
+		}
+		_, e := sqlx.NamedExec(exec, `INSERT INTO release_deletion_operations(id,target,episode_id,hash,intention,status,stage,manifest,attempts,last_error,created_at,updated_at) VALUES(:id,:target,:episode_id,:hash,:intention,:status,:stage,:manifest,:attempts,:last_error,:created_at,:updated_at)`, op)
+		return e
+	}
 	if r.Intention != "blacklist" {
-		_, err = s.DB.NamedExec(query, op)
-		return op, err
+		return op, persist(s.DB)
 	}
 	tx, err := s.DB.Beginx()
 	if err != nil {
 		return op, err
 	}
 	defer tx.Rollback()
-	if _, err = tx.NamedExec(query, op); err != nil {
+	if err = persist(tx); err != nil {
 		return Operation{}, err
 	}
 	reason := r.BlacklistReason
@@ -400,8 +450,10 @@ func (s *Service) prepare(r Request) (Operation, error) {
 		return Operation{}, err
 	}
 	return op, nil
+
 }
 func (s *Service) checkpoint(op *Operation, status, stage string, err error) error {
+	op.Version++
 	op.Status = status
 	op.Stage = stage
 	op.LastError = ""
@@ -423,7 +475,7 @@ func (s *Service) checkpoint(op *Operation, status, stage string, err error) err
 			op.NextAttemptAt = s.now().Add(retryDelays[index]).Unix()
 		}
 	}
-	_, e := s.DB.Exec("UPDATE release_deletion_operations SET status=?,stage=?,attempts=?,last_error=?,updated_at=?,next_attempt_at=?,retry_count=?,retryable=? WHERE id=?", op.Status, op.Stage, op.Attempts, op.LastError, op.UpdatedAt, op.NextAttemptAt, op.RetryCount, op.Retryable, op.ID)
+	_, e := s.DB.Exec("UPDATE release_deletion_operations SET status=?,stage=?,attempts=?,last_error=?,updated_at=?,next_attempt_at=?,retry_count=?,retryable=?,version=? WHERE id=?", op.Status, op.Stage, op.Attempts, op.LastError, op.UpdatedAt, op.NextAttemptAt, op.RetryCount, op.Retryable, op.Version, op.ID)
 	if e == nil {
 		s.notify(*op)
 	}
@@ -444,6 +496,20 @@ func (s *Service) run(ctx context.Context, op Operation) (Operation, error) {
 	if op.Status == "completed" {
 		return op, nil
 	}
+	if op.Stage == "queued" {
+		request := Request{EpisodeID: op.EpisodeID, Hash: op.Hash, Intention: op.Intention}
+		if err := json.Unmarshal([]byte(op.ManifestJSON), &request); err != nil {
+			return op, err
+		}
+		hydrated, err := s.prepare(request)
+		if err != nil {
+			op.Attempts++
+			op.RetryCount++
+			checkpointErr := s.checkpoint(&op, "failed", "queued", err)
+			return op, errors.Join(err, checkpointErr)
+		}
+		op = hydrated
+	}
 	op.Attempts++
 	op.RetryCount++
 	fail := func(err error) (Operation, error) {
@@ -457,12 +523,18 @@ func (s *Service) run(ctx context.Context, op Operation) (Operation, error) {
 	if err := s.checkpoint(&op, "running", op.Stage, nil); err != nil {
 		return op, err
 	}
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
 	if op.Stage == "prepared" {
 		var torrents []qs.CheckTorrentResponse
 		if err := s.Options.Client.CheckTorrentsWithHash("", op.Hash, &torrents); err != nil {
 			return fail(err)
 		}
 		if len(torrents) > 0 {
+			if err := ctx.Err(); err != nil {
+				return fail(err)
+			}
 			if err := s.Options.Client.DeleteTorrent(op.Hash, true); err != nil {
 				return fail(err)
 			}
@@ -474,6 +546,9 @@ func (s *Service) run(ctx context.Context, op Operation) (Operation, error) {
 	if op.Stage == "confirming" {
 		deadline := time.Now().Add(s.Options.ConfirmationTimeout)
 		for {
+			if err := ctx.Err(); err != nil {
+				return fail(err)
+			}
 			var torrents []qs.CheckTorrentResponse
 			err := s.Options.Client.CheckTorrentsWithHash("", op.Hash, &torrents)
 			if err != nil {
@@ -578,7 +653,7 @@ func (s *Service) run(ctx context.Context, op Operation) (Operation, error) {
 			return txFail(err)
 		}
 	}
-	if _, err = tx.Exec("UPDATE release_deletion_operations SET status='completed',stage='completed',last_error='',next_attempt_at=0,updated_at=? WHERE id=?", time.Now().Unix(), op.ID); err != nil {
+	if _, err = tx.Exec("UPDATE release_deletion_operations SET status='completed',stage='completed',last_error='',next_attempt_at=0,version=version+1,updated_at=? WHERE id=?", time.Now().Unix(), op.ID); err != nil {
 		return txFail(err)
 	}
 	if err = tx.Commit(); err != nil {
