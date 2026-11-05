@@ -64,7 +64,7 @@ func (d *EpisodeDownloader) acquire(ep model.Episode, response schema.SearchResp
 	if hash == "" {
 		return fmt.Errorf("candidate torrent hash is required to establish ownership")
 	}
-	if err := validateSnatch(db, &ep, hash); err != nil {
+	if err := validateSnatch(db, &ep, hash, upgrade != nil); err != nil {
 		return err
 	}
 	var associated int
@@ -90,6 +90,24 @@ func (d *EpisodeDownloader) acquire(ep model.Episode, response schema.SearchResp
 	if len(existing) > 0 {
 		return fmt.Errorf("candidate torrent already exists; acquisition has no cleanup ownership")
 	}
+	var snapshot release_deletion.Operation
+	var upgradeDeletion *release_deletion.Service
+	if upgrade != nil {
+		cfg, err := config.LoadConfig()
+		if err != nil {
+			return err
+		}
+		upgradeDeletion = release_deletion.NewWithOptions(db, logger, release_deletion.Options{Client: client, DownloadRoot: cfg.QBittorrentDownloadFolder, ShowsRoot: cfg.ShowsFolder})
+		snapshot, err = upgradeDeletion.PrepareUpgradeSnapshotWhileGuarded(context.Background(), ep.ID, hash)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err := upgradeDeletion.AbortUpgradeSnapshotWhileGuarded(snapshot); err != nil {
+				logger.Error("failed to cancel unstarted upgrade snapshot", "error", err)
+			}
+		}()
+	}
 	owned, err := client.AddTorrentIfAbsent(response.Guid)
 	if err != nil {
 		return err
@@ -97,7 +115,11 @@ func (d *EpisodeDownloader) acquire(ep model.Episode, response schema.SearchResp
 	if !owned {
 		return fmt.Errorf("candidate torrent already exists; acquisition has no cleanup ownership")
 	}
-	if err = snatchEpisodeLocked(db, &ep, response, score, upgrade); err != nil {
+	var prepared []release_deletion.Operation
+	if upgradeDeletion != nil {
+		prepared = append(prepared, snapshot)
+	}
+	if err = snatchEpisodeLocked(db, &ep, response, score, upgrade, prepared...); err != nil {
 		cfg, cfgErr := config.LoadConfig()
 		if cfgErr != nil {
 			return errors.Join(err, cfgErr, fmt.Errorf("new torrent requires cleanup"))

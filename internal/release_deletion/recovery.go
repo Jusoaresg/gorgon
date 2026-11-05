@@ -26,7 +26,7 @@ func retryable(err error) bool {
 }
 func (s *Service) List() ([]Operation, error) {
 	ops := []Operation{}
-	err := s.DB.Select(&ops, "SELECT * FROM release_deletion_operations ORDER BY created_at DESC, id DESC")
+	err := s.DB.Select(&ops, "SELECT * FROM release_deletion_operations WHERE intention != 'upgrade' ORDER BY created_at DESC, id DESC")
 	return ops, err
 }
 
@@ -85,6 +85,9 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 func (s *Service) notify(op Operation) {
+	if op.Intention == "upgrade" {
+		return
+	}
 	if op.Status == "completed" && op.EpisodeID != 0 {
 		tracking := op.Intention
 		if tracking == "blacklist" {

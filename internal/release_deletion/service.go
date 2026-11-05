@@ -33,6 +33,7 @@ type Client interface {
 	GetContent(string) ([]cm.EpisodeContent, error)
 }
 type Request struct {
+	candidateHash      string
 	EpisodeID          int64  `json:"episode_id"`
 	Hash               string `json:"hash"`
 	Intention          string `json:"intention"`
@@ -40,6 +41,7 @@ type Request struct {
 	BlacklistExpiresAt *int64 `json:"blacklist_expires_at,omitempty"`
 }
 type Manifest struct {
+	CandidateHash  string            `json:"candidate_hash,omitempty"`
 	LinkIdentities map[string]string `json:"link_identities"`
 	Files          []string          `json:"files"`
 	Links          []string          `json:"links"`
@@ -173,7 +175,10 @@ func ownedPath(root, name string) (string, error) {
 }
 func (s *Service) prepare(r Request) (Operation, error) {
 	var op Operation
-	if r.Intention != "skipped" && r.Intention != "wanted" && r.Intention != "missing" && r.Intention != "blacklist" {
+	if r.Intention == "upgrade" && r.candidateHash == "" {
+		return op, ErrUnsafe
+	}
+	if r.Intention != "skipped" && r.Intention != "wanted" && r.Intention != "missing" && r.Intention != "blacklist" && r.Intention != "upgrade" {
 		return op, fmt.Errorf("invalid deletion intention")
 	}
 	if r.EpisodeID == 0 && r.Hash == "" {
@@ -307,7 +312,7 @@ func (s *Service) prepare(r Request) (Operation, error) {
 	if len(files) == 0 {
 		return op, ErrUnsafe
 	}
-	m := Manifest{DownloadRoot: root, ShowsRoot: s.Options.ShowsRoot, LinkIdentities: map[string]string{}}
+	m := Manifest{CandidateHash: r.candidateHash, DownloadRoot: root, ShowsRoot: s.Options.ShowsRoot, LinkIdentities: map[string]string{}}
 	for _, f := range files {
 		if filepath.IsAbs(f.Name) {
 			return op, ErrUnsafe
@@ -405,6 +410,9 @@ func (s *Service) prepare(r Request) (Operation, error) {
 	}
 	now := s.now().Unix()
 	op = Operation{ID: uuid.NewString(), Target: target, EpisodeID: r.EpisodeID, Hash: r.Hash, Intention: r.Intention, Status: "pending", Stage: "prepared", ManifestJSON: string(b), CreatedAt: s.now().UnixMicro(), UpdatedAt: now}
+	if r.Intention == "upgrade" {
+		op.Stage = "deferred"
+	}
 	if queued != nil {
 		op.ID = queued.ID
 		op.CreatedAt = queued.CreatedAt
@@ -496,6 +504,15 @@ func (s *Service) run(ctx context.Context, op Operation) (Operation, error) {
 	if op.Status == "completed" {
 		return op, nil
 	}
+	if op.Stage == "deferred" {
+		if op.Intention != "upgrade" {
+			return op, ErrUnsafe
+		}
+		if err := s.AbortUpgradeSnapshotWhileGuarded(op); err != nil {
+			return op, err
+		}
+		return s.Get(op.ID)
+	}
 	if op.Stage == "queued" {
 		request := Request{EpisodeID: op.EpisodeID, Hash: op.Hash, Intention: op.Intention}
 		if err := json.Unmarshal([]byte(op.ManifestJSON), &request); err != nil {
@@ -519,6 +536,11 @@ func (s *Service) run(ctx context.Context, op Operation) (Operation, error) {
 	var m Manifest
 	if err := json.Unmarshal([]byte(op.ManifestJSON), &m); err != nil {
 		return fail(err)
+	}
+	if op.Intention == "upgrade" {
+		if err := s.verifyUpgradeCandidate(op, m); err != nil {
+			return fail(err)
+		}
 	}
 	if err := s.checkpoint(&op, "running", op.Stage, nil); err != nil {
 		return op, err
@@ -637,7 +659,11 @@ func (s *Service) run(ctx context.Context, op Operation) (Operation, error) {
 	defer tx.Rollback()
 	txFail := func(e error) (Operation, error) { _ = tx.Rollback(); return fail(e) }
 	if op.EpisodeID != 0 {
-		for _, query := range []string{"DELETE FROM episode_contents WHERE episode_id = ?", "DELETE FROM episode_torrents WHERE episode_id = ?"} {
+		queries := []string{"DELETE FROM episode_contents WHERE episode_id = ?"}
+		if op.Intention != "upgrade" {
+			queries = append(queries, "DELETE FROM episode_torrents WHERE episode_id = ?")
+		}
+		for _, query := range queries {
 			if _, err = tx.Exec(query, op.EpisodeID); err != nil {
 				return txFail(err)
 			}
@@ -649,8 +675,10 @@ func (s *Service) run(ctx context.Context, op Operation) (Operation, error) {
 				return txFail(err)
 			}
 		}
-		if _, err = tx.Exec("UPDATE episodes SET tracking = ? WHERE id = ?", tracking, op.EpisodeID); err != nil {
-			return txFail(err)
+		if op.Intention != "upgrade" {
+			if _, err = tx.Exec("UPDATE episodes SET tracking = ? WHERE id = ?", tracking, op.EpisodeID); err != nil {
+				return txFail(err)
+			}
 		}
 	}
 	if _, err = tx.Exec("UPDATE release_deletion_operations SET status='completed',stage='completed',last_error='',next_attempt_at=0,version=version+1,updated_at=? WHERE id=?", time.Now().Unix(), op.ID); err != nil {

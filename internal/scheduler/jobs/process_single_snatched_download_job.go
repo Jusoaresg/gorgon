@@ -123,7 +123,24 @@ func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *servic
 func ProcessSingleSnatchedDownloadWithDB(db *sqlx.DB, ep *model.Episode, qbittorrentService *service.QBittorrentService) error {
 	unlock := release_guard.Lock(db)
 	defer unlock()
-	if err := release_guard.Check(db, ep.ID, ""); err != nil {
+	var currentHash string
+	if err := db.Get(&currentHash, "SELECT hash FROM episode_torrents WHERE episode_id=?", ep.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	cfgForCleanup, err := config.LoadConfig()
+	if err != nil {
+		return err
+	}
+	deletion := release_deletion.NewWithOptions(db, config.GetLogger(), release_deletion.Options{Client: qbittorrentService, DownloadRoot: cfgForCleanup.QBittorrentDownloadFolder, ShowsRoot: cfgForCleanup.ShowsFolder})
+	upgrading, err := deletion.HasUpgradeSnapshotWhileGuarded(ep.ID, currentHash)
+	if err != nil {
+		return err
+	}
+	check := release_guard.Check
+	if upgrading {
+		check = release_guard.CheckUpgradeImport
+	}
+	if err := check(db, ep.ID, currentHash); err != nil {
 		return err
 	}
 	current, err := episodeRepository.NewEpisodeRepository(db).GetByID(ep.ID)
@@ -210,6 +227,9 @@ func ProcessSingleSnatchedDownloadWithDB(db *sqlx.DB, ep *model.Episode, qbittor
 		)
 
 		if shouldBlacklist {
+			if upgrading {
+				return fmt.Errorf("upgrade candidate stalled; keep the existing release and repair or retry the candidate before cleanup")
+			}
 			cfg, err := config.LoadConfig()
 			if err != nil {
 				return err
@@ -259,10 +279,15 @@ func ProcessSingleSnatchedDownloadWithDB(db *sqlx.DB, ep *model.Episode, qbittor
 		}
 		// The snatcher historically overwrote the old hash. Without its old
 		// manifest an upgrade cannot safely delete existing release artifacts.
-		if len(existingContents) > 0 {
+		if len(existingContents) > 0 && !upgrading {
 			return fmt.Errorf("existing release requires verified cleanup before import")
 		}
-		wasUpgrade := false
+		wasUpgrade := upgrading
+		if upgrading {
+			if _, err := deletion.CompleteUpgradeSnapshotWhileGuarded(context.Background(), ep.ID, torrent.Hash); err != nil {
+				return err
+			}
+		}
 
 		tx, err := db.Beginx()
 		if err != nil {
@@ -321,11 +346,11 @@ func ProcessSingleSnatchedDownloadWithDB(db *sqlx.DB, ep *model.Episode, qbittor
 
 		episode.EmitEpisodeTrackingUpdatedEvent(ep.ID, model.TrackingDownloaded, episodeTorrent.InfoUrl)
 
+		tgService, telegramErr := telegramService.NewTelegramService(logger)
+		if telegramErr != nil {
+			return nil
+		}
 		go func() {
-			tgService, err := telegramService.NewTelegramService(logger)
-			if err != nil {
-				return
-			}
 			if err := tgService.SendEpisodeDownloaded(telegramSchema.EpisodeDownloadedTemplateInput{
 				ShowName:     show.Name,
 				Season:       ep.Season,
