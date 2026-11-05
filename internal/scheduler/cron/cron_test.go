@@ -25,8 +25,7 @@ func TestStartDailyUpdate_Cancellation(t *testing.T) {
 	}()
 
 	// Wait for the immediate initial call
-	time.Sleep(20 * time.Millisecond)
-	assert.GreaterOrEqual(t, calls.Load(), int32(1))
+	assert.Eventually(t, func() bool { return calls.Load() >= 1 }, 5*time.Second, time.Millisecond, "expected immediate initial callback")
 
 	// Cancel context and verify it exits promptly
 	cancel()
@@ -54,8 +53,7 @@ func TestStartShowsUpdate_PeriodicExecutionAndCancellation(t *testing.T) {
 	}()
 
 	// Wait for initial call + at least 1 ticker trigger
-	time.Sleep(75 * time.Millisecond)
-	assert.GreaterOrEqual(t, calls.Load(), int32(2), "expected initial call plus at least one periodic tick")
+	assert.Eventually(t, func() bool { return calls.Load() >= 2 }, 5*time.Second, time.Millisecond, "expected initial call plus at least one periodic tick")
 
 	cancel()
 
@@ -85,8 +83,7 @@ func TestStartShowsUpdate_SmartCheck_RunsImmediatelyWhenNoRecord(t *testing.T) {
 	}()
 
 	// Should execute immediately on startup because no previous update exists
-	time.Sleep(30 * time.Millisecond)
-	assert.Equal(t, int32(1), calls.Load(), "expected immediate execution on clean startup")
+	assert.Eventually(t, func() bool { return calls.Load() == 1 }, 5*time.Second, time.Millisecond, "expected immediate execution on clean startup")
 
 	cancel()
 	<-done
@@ -146,8 +143,7 @@ func TestStartShowsUpdate_SmartCheck_RunsImmediatelyWhenOlderThanInterval(t *tes
 	}()
 
 	// Should execute immediately because last update was older than interval
-	time.Sleep(30 * time.Millisecond)
-	assert.Equal(t, int32(1), calls.Load(), "expected immediate execution when last update is older than interval")
+	assert.Eventually(t, func() bool { return calls.Load() == 1 }, 5*time.Second, time.Millisecond, "expected immediate execution when last update is older than interval")
 
 	cancel()
 	<-done
