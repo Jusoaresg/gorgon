@@ -2,7 +2,11 @@ package release_deletion
 
 import (
 	"context"
+	"errors"
+	qb "github.com/jusoaresg/gorgon/external/qbittorrent/service"
+	"github.com/jusoaresg/gorgon/internal/release_guard"
 	"github.com/stretchr/testify/require"
+	"net/http"
 	"path/filepath"
 	"testing"
 	"time"
@@ -97,4 +101,50 @@ func TestAcceptedSubmissionSurvivesRequestCancellationAndWorkerRestart(t *testin
 	require.NoError(t, err)
 	require.Equal(t, "completed", result.Status)
 	require.Equal(t, op.ID, result.ID)
+}
+
+func TestRetryDuringQueuedHydrationCannotBeOverwrittenByWorker(t *testing.T) {
+	s, db, _, _, _ := fixture(t)
+	op, err := s.Submit(context.Background(), Request{EpisodeID: 1, Intention: "wanted"})
+	require.NoError(t, err)
+	_, err = db.Exec("UPDATE release_deletion_operations SET status='failed',retry_count=4 WHERE id=?", op.ID)
+	require.NoError(t, err)
+	entered, release := make(chan struct{}), make(chan struct{})
+	client := s.Options.Client.(*qb.QBittorrentService)
+	client.APIService.Client.Transport = transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/api/v2/torrents/info" {
+			close(entered)
+			<-release
+			return nil, errors.New("metadata unavailable")
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	})
+	done := make(chan struct{})
+	go func() { defer close(done); _, _ = s.Resume(context.Background(), op.ID) }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not start metadata request")
+	}
+	retryResult := make(chan error, 1)
+	go func() { _, err := s.SubmitRetry(context.Background(), op.ID); retryResult <- err }()
+	var retryErr error
+	select {
+	case retryErr = <-retryResult:
+	case <-time.After(time.Second):
+		close(release)
+		<-done
+		t.Fatal("retry submission waited on the torrent client")
+	}
+	close(release)
+	<-done
+	require.ErrorIs(t, retryErr, release_guard.ErrBusy)
+	failed, err := s.Get(op.ID)
+	require.NoError(t, err)
+	require.Equal(t, 5, failed.RetryCount)
+	accepted, err := s.SubmitRetry(context.Background(), op.ID)
+	require.NoError(t, err)
+	require.Equal(t, "pending", accepted.Status)
+	require.Zero(t, accepted.RetryCount)
+	require.Greater(t, accepted.Version, failed.Version)
 }
