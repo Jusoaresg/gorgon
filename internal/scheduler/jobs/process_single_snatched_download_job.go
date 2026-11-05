@@ -2,8 +2,12 @@ package jobs
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"github.com/jmoiron/sqlx"
 	"github.com/jusoaresg/gorgon/internal/release_deletion"
+	"github.com/jusoaresg/gorgon/internal/release_guard"
 	"log/slog"
 	"os"
 	"time"
@@ -16,7 +20,6 @@ import (
 	"github.com/jusoaresg/gorgon/internal/episode/events"
 	"github.com/jusoaresg/gorgon/internal/episode/model"
 	episodeRepository "github.com/jusoaresg/gorgon/internal/episode/repository"
-	epContentModel "github.com/jusoaresg/gorgon/internal/episode_content/model"
 	epContentRepository "github.com/jusoaresg/gorgon/internal/episode_content/repository"
 	episodeTorrentModel "github.com/jusoaresg/gorgon/internal/episode_torrent/model"
 	episodeTorrentRepository "github.com/jusoaresg/gorgon/internal/episode_torrent/repository"
@@ -114,12 +117,30 @@ func EvaluateStalledTorrent(
 }
 
 func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *service.QBittorrentService) error {
+	return ProcessSingleSnatchedDownloadWithDB(config.GetSQLite(), ep, qbittorrentService)
+}
+
+func ProcessSingleSnatchedDownloadWithDB(db *sqlx.DB, ep *model.Episode, qbittorrentService *service.QBittorrentService) error {
+	unlock := release_guard.Lock(db)
+	defer unlock()
+	if err := release_guard.Check(db, ep.ID, ""); err != nil {
+		return err
+	}
+	current, err := episodeRepository.NewEpisodeRepository(db).GetByID(ep.ID)
+	if err != nil {
+		return err
+	}
+	if ep.Tracking != model.TrackingSnatched || current.Tracking != model.TrackingSnatched {
+		return release_guard.ErrStale
+	}
+	fresh := current
+	ep = &fresh
 	logger := config.GetLogger()
 	safeDB := config.GetSafeDB()
 
-	episodeRepo := episodeRepository.NewEpisodeRepository(safeDB.Db)
-	episodeContentRepo := epContentRepository.NewEpisodeContentRepository(safeDB.Db)
-	episodeTorrentRepo := episodeTorrentRepository.NewEpisodeTorrentRepository(safeDB.Db)
+	episodeRepo := episodeRepository.NewEpisodeRepository(db)
+	episodeContentRepo := epContentRepository.NewEpisodeContentRepository(db)
+	episodeTorrentRepo := episodeTorrentRepository.NewEpisodeTorrentRepository(db)
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		return err
@@ -127,7 +148,16 @@ func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *servic
 
 	episodeTorrent, err := episodeTorrentRepo.GetByEpisodeID(ep.ID)
 	if err != nil {
-		logger.Info(fmt.Sprintf("Episode S%02d E%02d %s has no torrent associated, resetting to skipped.", ep.Season, ep.Number, ep.Name))
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		contents, listErr := episodeContentRepo.ListByEpisodeId(ep.ID)
+		if listErr != nil {
+			return listErr
+		}
+		if len(contents) > 0 {
+			return fmt.Errorf("installed release has no torrent association; ownership requires repair")
+		}
 		return resetToSkipped(ep, episodeRepo)
 	}
 
@@ -143,31 +173,30 @@ func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *servic
 		}
 
 		if len(anyTorrents) == 0 {
-			logger.Info(fmt.Sprintf("Episode S%02d E%02d %s no longer in torrent client, resetting to skipped.", ep.Season, ep.Number, ep.Name))
-
-			if err := resetToSkipped(ep, episodeRepo); err != nil {
-				return err
-			}
-
+			// A missing client entry does not prove existing library ownership
+			// can be discarded; keep it actionable for coordinated cleanup.
 			contents, err := episodeContentRepo.ListByEpisodeId(ep.ID)
-			if err == nil {
-				showRepo := showRepository.NewShowRepository(safeDB.Db)
-				show, err := showRepo.GetById(ep.ShowID)
-				if err == nil {
-					for _, content := range contents {
-						_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, *ep, content)
-						_ = episodeContentRepo.DeleteById(content.ID)
-					}
-					_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, *ep, epContentModel.EpisodeContent{})
-					_ = utils.CleanBrokenSymlinksInSeason(cfg.ShowsFolder, show.Name, ep.Season)
-				}
-			}
-
-			if err := episodeTorrentRepo.DeleteByEpisodeID(ep.ID); err != nil {
-				logger.Error("failed to delete episode torrent", slog.Int64("episode_id", ep.ID), slog.String("error", err.Error()))
+			if err != nil {
 				return err
 			}
-
+			if len(contents) > 0 {
+				return fmt.Errorf("torrent is missing but installed release still requires verified cleanup")
+			}
+			tx, err := db.Beginx()
+			if err != nil {
+				return err
+			}
+			defer tx.Rollback()
+			if _, err = tx.Exec("UPDATE episodes SET tracking='skipped' WHERE id=?", ep.ID); err != nil {
+				return err
+			}
+			if _, err = tx.Exec("DELETE FROM episode_torrents WHERE episode_id=?", ep.ID); err != nil {
+				return err
+			}
+			if err = tx.Commit(); err != nil {
+				return err
+			}
+			episode.EmitEpisodeTrackingUpdatedEvent(ep.ID, model.TrackingSkipped, "")
 			return nil
 		}
 
@@ -185,15 +214,19 @@ func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *servic
 			if err != nil {
 				return err
 			}
-			deletion := release_deletion.NewWithOptions(safeDB.Db, logger, release_deletion.Options{Client: qbittorrentService, DownloadRoot: cfg.QBittorrentDownloadFolder, ShowsRoot: cfg.ShowsFolder})
+			deletion := release_deletion.NewWithOptions(db, logger, release_deletion.Options{Client: qbittorrentService, DownloadRoot: cfg.QBittorrentDownloadFolder, ShowsRoot: cfg.ShowsFolder})
+			unlock()
 			_, err = deletion.Delete(context.Background(), release_deletion.Request{EpisodeID: ep.ID, Hash: episodeTorrent.Hash, Intention: "blacklist", BlacklistReason: reason, BlacklistExpiresAt: expiresAt})
 			return err
 		}
 
 		if nextStalledSince != episodeTorrent.StalledSince || nextAmountLeft != episodeTorrent.LastAmountLeft {
 			safeDB.Write.Lock()
-			_ = episodeTorrentRepo.UpdateStallState(ep.ID, nextStalledSince, nextAmountLeft)
+			updateErr := episodeTorrentRepo.UpdateStallState(ep.ID, nextStalledSince, nextAmountLeft)
 			safeDB.Write.Unlock()
+			if updateErr != nil {
+				return updateErr
+			}
 		}
 
 		logger.Debug(fmt.Sprintf("Episode S%02d E%02d %s still downloading (state=%s).", ep.Season, ep.Number, ep.Name, activeTorrent.State))
@@ -214,38 +247,28 @@ func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *servic
 			return err
 		}
 
-		showRepo := showRepository.NewShowRepository(config.GetSQLite())
+		showRepo := showRepository.NewShowRepository(db)
 		show, err := showRepo.GetById(ep.ShowID)
-
-		// Atomic cleanup of prior files/symlinks if this download is an upgrade
-		existingContents, _ := episodeContentRepo.ListByEpisodeId(ep.ID)
-		wasUpgrade := len(existingContents) > 0
-		downloadFolder, _ := paths.GetTorrentDownloadFolder()
-		for _, ec := range existingContents {
-			isSameFile := false
-			for _, newContent := range contents {
-				if newContent.Name == ec.Name {
-					isSameFile = true
-					break
-				}
-			}
-			if !isSameFile && downloadFolder != "" && ec.Name != "" {
-				_, _ = utils.DeleteFile(downloadFolder, ec.Name)
-			}
-			if cfg != nil && show.Name != "" {
-				_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, *ep, ec)
-			}
-			_ = episodeContentRepo.DeleteById(ec.ID)
-		}
-		if cfg != nil && show.Name != "" {
-			_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, *ep, epContentModel.EpisodeContent{})
-			_ = utils.CleanBrokenSymlinksInSeason(cfg.ShowsFolder, show.Name, ep.Season)
-		}
-
-		tx, err := config.GetSQLite().Beginx()
 		if err != nil {
 			return err
 		}
+
+		existingContents, err := episodeContentRepo.ListByEpisodeId(ep.ID)
+		if err != nil {
+			return err
+		}
+		// The snatcher historically overwrote the old hash. Without its old
+		// manifest an upgrade cannot safely delete existing release artifacts.
+		if len(existingContents) > 0 {
+			return fmt.Errorf("existing release requires verified cleanup before import")
+		}
+		wasUpgrade := false
+
+		tx, err := db.Beginx()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
 		if err := episodeRepo.UpdateTx(tx, *ep); err != nil {
 			return err
 		}
@@ -254,21 +277,22 @@ func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *servic
 		for _, content := range contents {
 			destPath, err := utils.SymlinkPathForEpisode(cfg.ShowsFolder, show.Name, *ep, content)
 			if err != nil {
-				for _, p := range createdLinks {
-					_ = os.Remove(p)
-				}
+				cleanupErr := removeCreatedLinks(createdLinks)
 				tx.Rollback()
-				return err
+				return errors.Join(err, cleanupErr)
 			}
 			episodeDownloadFile, err := paths.GetEpisodeDownloadFile(content.Name)
 			if err != nil {
-				for _, p := range createdLinks {
-					_ = os.Remove(p)
-				}
+				cleanupErr := removeCreatedLinks(createdLinks)
 				tx.Rollback()
-				return err
+				return errors.Join(err, cleanupErr)
 			}
 
+			if _, statErr := os.Lstat(destPath); statErr == nil {
+				return rollbackCreatedLinks(createdLinks, fmt.Errorf("import destination already exists"))
+			} else if !os.IsNotExist(statErr) {
+				return rollbackCreatedLinks(createdLinks, statErr)
+			}
 			if err := utils.CreateMediaLink(episodeDownloadFile, destPath, cfg.LinkMode); err != nil {
 				logger.Error("Failed to create media link",
 					slog.String("mode", cfg.LinkMode),
@@ -276,29 +300,23 @@ func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *servic
 					slog.String("to", destPath),
 					slog.String("error", err.Error()),
 				)
-				for _, p := range createdLinks {
-					_ = os.Remove(p)
-				}
+				cleanupErr := removeCreatedLinks(createdLinks)
 				tx.Rollback()
-				return err
+				return errors.Join(err, cleanupErr)
 			}
 			createdLinks = append(createdLinks, destPath)
 
 			content.FilePath = destPath
 			content.EpisodeId = ep.ID
 			if _, err := episodeContentRepo.CreateTx(tx, content); err != nil {
-				for _, p := range createdLinks {
-					_ = os.Remove(p)
-				}
-				return err
+				cleanupErr := removeCreatedLinks(createdLinks)
+				return errors.Join(err, cleanupErr)
 			}
 		}
 
 		if err := tx.Commit(); err != nil {
-			for _, p := range createdLinks {
-				_ = os.Remove(p)
-			}
-			return err
+			cleanupErr := removeCreatedLinks(createdLinks)
+			return errors.Join(err, cleanupErr)
 		}
 
 		episode.EmitEpisodeTrackingUpdatedEvent(ep.ID, model.TrackingDownloaded, episodeTorrent.InfoUrl)
@@ -344,4 +362,18 @@ func resetToSkipped(ep *model.Episode, episodeRepo *episodeRepository.EpisodeRep
 	episode.EmitEpisodeTrackingUpdatedEvent(ep.ID, model.TrackingSkipped, "")
 
 	return nil
+}
+
+// Only paths successfully created by this import attempt enter this list.
+func removeCreatedLinks(paths []string) error {
+	var result error
+	for _, p := range paths {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			result = errors.Join(result, err)
+		}
+	}
+	return result
+}
+func rollbackCreatedLinks(paths []string, cause error) error {
+	return errors.Join(cause, removeCreatedLinks(paths))
 }

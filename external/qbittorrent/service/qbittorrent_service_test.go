@@ -550,3 +550,20 @@ func TestGetContent_Success(t *testing.T) {
 	assert.Equal(t, "S01E01.mkv", content[0].Name)
 	assert.Equal(t, float64(1000), content[0].Size)
 }
+
+func TestAddTorrentIfAbsentDoesNotOwnExistingTorrent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/auth/login" {
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "test"})
+			fmt.Fprint(w, "Ok.")
+			return
+		}
+		w.WriteHeader(http.StatusConflict)
+	}))
+	defer server.Close()
+	logger := slog.Default()
+	svc := &QBittorrentService{APIService: services.NewAPIService(server.URL, logger), Logger: logger}
+	owned, err := svc.AddTorrentIfAbsent("magnet:?xt=urn:btih:existing")
+	assert.NoError(t, err)
+	assert.False(t, owned)
+}

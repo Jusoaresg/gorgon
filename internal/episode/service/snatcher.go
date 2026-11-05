@@ -1,6 +1,9 @@
 package service
 
 import (
+	"fmt"
+	"github.com/jmoiron/sqlx"
+	"github.com/jusoaresg/gorgon/internal/release_guard"
 	"log/slog"
 	"sync"
 
@@ -14,7 +17,6 @@ import (
 	episodeTorrentModel "github.com/jusoaresg/gorgon/internal/episode_torrent/model"
 	episodeTorrentRepository "github.com/jusoaresg/gorgon/internal/episode_torrent/repository"
 	showRepository "github.com/jusoaresg/gorgon/internal/show/repository"
-	"github.com/jusoaresg/gorgon/pkg/concurrency"
 )
 
 var DbWriteMutex sync.Mutex
@@ -35,21 +37,36 @@ func SnatchEpisode(episode *model.Episode, response prowlarrSchema.SearchRespons
 }
 
 func SnatchEpisodeWithUpgrade(episode *model.Episode, response prowlarrSchema.SearchResponse, score int, upgrade *UpgradeInfo) error {
-	logger := config.GetLogger()
-	safeDB := config.GetSafeDB()
+	db := config.GetSQLite()
+	unlock := release_guard.Lock(db)
+	defer unlock()
+	return snatchEpisodeLocked(db, episode, response, score, upgrade)
+}
 
-	episodeRepo := repository.NewEpisodeRepository(safeDB.Db)
-	episodeTorrentRepo := episodeTorrentRepository.NewEpisodeTorrentRepository(safeDB.Db)
+func snatchEpisodeLocked(db *sqlx.DB, episode *model.Episode, response prowlarrSchema.SearchResponse, score int, upgrade *UpgradeInfo) error {
+	if err := validateSnatch(db, episode, response.InfoHash); err != nil {
+		return err
+	}
+	logger := config.GetLogger()
+
+	episodeRepo := repository.NewEpisodeRepository(db)
+	episodeTorrentRepo := episodeTorrentRepository.NewEpisodeTorrentRepository(db)
 
 	episode.Tracking = model.TrackingSnatched
 	episodeTorrent := episodeTorrentModel.FromSearchResponse(episode.ID, response, score)
 
-	err := concurrency.WithWriteLock(safeDB.Write, func() error {
-		if _, err := episodeTorrentRepo.Upsert(episodeTorrent); err != nil {
-			return err
-		}
-		return episodeRepo.Update(*episode)
-	})
+	tx, err := db.Beginx()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = episodeTorrentRepo.UpsertTx(tx, episodeTorrent); err == nil {
+		err = episodeRepo.UpdateTx(tx, *episode)
+	}
+	if err == nil {
+		err = tx.Commit()
+	}
+
 	if err != nil {
 		logger.Error(
 			"failed to update episode status to snatched",
@@ -67,7 +84,7 @@ func SnatchEpisodeWithUpgrade(episode *model.Episode, response prowlarrSchema.Se
 		if err != nil {
 			return
 		}
-		showRepo := showRepository.NewShowRepository(safeDB.Db)
+		showRepo := showRepository.NewShowRepository(db)
 		showName := ""
 		if show, err := showRepo.GetById(episode.ShowID); err == nil {
 			showName = show.Name
@@ -94,5 +111,26 @@ func SnatchEpisodeWithUpgrade(episode *model.Episode, response prowlarrSchema.Se
 		}
 	}()
 
+	return nil
+}
+
+func validateSnatch(db *sqlx.DB, episode *model.Episode, hash string) error {
+	if err := release_guard.Check(db, episode.ID, hash); err != nil {
+		return err
+	}
+	current, err := repository.NewEpisodeRepository(db).GetByID(episode.ID)
+	if err != nil {
+		return err
+	}
+	if current.Tracking != episode.Tracking || current.Tracking == model.TrackingSkipped || current.Tracking == model.TrackingDownloaded || current.Tracking == model.TrackingSnatched {
+		return release_guard.ErrStale
+	}
+	var installed int
+	if err = db.Get(&installed, "SELECT count(*) FROM episode_contents WHERE episode_id=?", episode.ID); err != nil {
+		return err
+	}
+	if installed > 0 {
+		return fmt.Errorf("existing release requires verified deletion before replacement")
+	}
 	return nil
 }

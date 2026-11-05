@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"errors"
+	"github.com/jusoaresg/gorgon/internal/release_guard"
 	"net/http"
 
 	episodeEvents "github.com/jusoaresg/gorgon/internal/episode/events"
@@ -57,6 +58,9 @@ func (h *Handler) ChangeEpisodeStatus(c echo.Context) error {
 	if !allCompleted {
 		status = http.StatusMultiStatus
 		message = "Some tracking changes are incomplete"
+		if len(results) == 1 && results[0].Status == "busy" {
+			status = http.StatusServiceUnavailable
+		}
 		if len(results) == 1 && pending {
 			status = http.StatusAccepted
 		}
@@ -66,12 +70,24 @@ func (h *Handler) ChangeEpisodeStatus(c echo.Context) error {
 
 func (h *Handler) changeTrackingTarget(c echo.Context, id int64, tracking string) trackingResult {
 	result := trackingResult{EpisodeID: id, Status: "failed"}
+	unlock, ok := release_guard.TryLock(h.DB)
+	if !ok {
+		result.Status = "busy"
+		result.Error = release_guard.ErrBusy.Error()
+		return result
+	}
+	defer unlock()
 	ep, err := h.EpisodeRepo.GetByID(id)
 	if err != nil {
 		result.Error = "Unable to load episode"
 		if errors.Is(err, sql.ErrNoRows) {
 			result.Status = "not_found"
 		}
+		return result
+	}
+	if guardErr := release_guard.Check(h.DB, id, ""); guardErr != nil && (tracking == episodeModel.TrackingDownloaded || tracking == episodeModel.TrackingSnatched) {
+		result.Status = "conflict"
+		result.Error = "Release is protected by an incomplete deletion"
 		return result
 	}
 	// Metadata-only transitions use one transaction, retaining active operation
@@ -96,6 +112,7 @@ func (h *Handler) changeTrackingTarget(c echo.Context, id int64, tracking string
 	}
 	if hasActive || (assets > 0 && tracking != episodeModel.TrackingDownloaded) {
 		_ = tx.Rollback()
+		unlock()
 		if tracking == episodeModel.TrackingDownloaded || tracking == episodeModel.TrackingSnatched {
 			result.Status = "conflict"
 			result.Error = "Installed releases cannot transition to this tracking value"
