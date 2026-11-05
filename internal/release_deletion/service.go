@@ -504,6 +504,25 @@ func (s *Service) run(ctx context.Context, op Operation) (Operation, error) {
 			return op, err
 		}
 	}
+	// Later checkpoints can outlive the process gate. Revalidate external state
+	// before touching links or committing associations after a restart.
+	if op.Stage == "links" || op.Stage == "finalizing" {
+		var torrents []qs.CheckTorrentResponse
+		if err := s.Options.Client.CheckTorrentsWithHash("", op.Hash, &torrents); err != nil {
+			return fail(err)
+		}
+		if len(torrents) > 0 {
+			return fail(fmt.Errorf("%w: torrent reappeared after confirmation", ErrUnsafe))
+		}
+		for _, p := range append(append([]string{}, m.Files...), m.Directories...) {
+			if _, err := ownedPath(m.DownloadRoot, p); err != nil {
+				return fail(err)
+			}
+			if err := absent(p); err != nil {
+				return fail(err)
+			}
+		}
+	}
 	if op.Stage == "links" {
 		for _, p := range m.Links {
 			if _, err := ownedPath(m.ShowsRoot, p); err != nil {
@@ -527,6 +546,14 @@ func (s *Service) run(ctx context.Context, op Operation) (Operation, error) {
 	}
 	if op.Stage != "finalizing" {
 		return fail(fmt.Errorf("unknown deletion stage %q", op.Stage))
+	}
+	for _, p := range m.Links {
+		if _, err := ownedPath(m.ShowsRoot, p); err != nil {
+			return fail(err)
+		}
+		if err := absent(p); err != nil {
+			return fail(err)
+		}
 	}
 	tx, err := s.DB.Beginx()
 	if err != nil {
