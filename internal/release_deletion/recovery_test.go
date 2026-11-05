@@ -3,8 +3,10 @@ package release_deletion
 import (
 	"context"
 	qb "github.com/jusoaresg/gorgon/external/qbittorrent/service"
+	"io"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -136,3 +138,99 @@ func TestTimeoutAfterClientEffectReconcilesWithoutLosingManifest(t *testing.T) {
 type transportFunc func(*http.Request) (*http.Response, error)
 
 func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestFinalizationRetryPreservesReappearedPaths(t *testing.T) {
+	for _, target := range []string{"source", "link"} {
+		t.Run(target, func(t *testing.T) {
+			s, db, source, link, _ := fixture(t)
+			op, err := s.Delete(context.Background(), Request{EpisodeID: 1, Intention: "wanted"})
+			require.Error(t, err)
+			require.NoError(t, os.Remove(source))
+			_, err = db.Exec(`CREATE TRIGGER reject_finalization BEFORE UPDATE OF tracking ON episodes BEGIN SELECT RAISE(FAIL,'temporary database failure'); END`)
+			require.NoError(t, err)
+			op, err = s.Resume(context.Background(), op.ID)
+			require.Error(t, err)
+			require.Equal(t, "finalizing", op.Stage)
+			_, err = db.Exec("DROP TRIGGER reject_finalization")
+			require.NoError(t, err)
+			path := source
+			if target == "link" {
+				path = link
+			}
+			require.NoError(t, os.WriteFile(path, []byte("new external content"), 0600))
+			restarted := NewWithOptions(db, s.Logger, s.Options)
+			op, err = restarted.Resume(context.Background(), op.ID)
+			require.Error(t, err)
+			require.Equal(t, "failed", op.Status)
+			content, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Equal(t, "new external content", string(content))
+			var tracking string
+			require.NoError(t, db.Get(&tracking, "SELECT tracking FROM episodes WHERE id=1"))
+			require.Equal(t, "downloaded", tracking)
+			var associations int
+			require.NoError(t, db.Get(&associations, "SELECT count(*) FROM episode_torrents"))
+			require.Equal(t, 1, associations)
+		})
+	}
+}
+
+func TestLinksCheckpointPreservesRecoveryWhenSourceReappears(t *testing.T) {
+	s, db, source, link, _ := fixture(t)
+	op, err := s.Delete(context.Background(), Request{EpisodeID: 1, Intention: "wanted"})
+	require.Error(t, err)
+	_, err = db.Exec("UPDATE release_deletion_operations SET stage='links' WHERE id=?", op.ID)
+	require.NoError(t, err)
+	restarted := NewWithOptions(db, s.Logger, s.Options)
+	op, err = restarted.Resume(context.Background(), op.ID)
+	require.Error(t, err)
+	require.Equal(t, "links", op.Stage)
+	require.Equal(t, "failed", op.Status)
+	require.FileExists(t, source)
+	require.FileExists(t, link)
+}
+
+func TestLinksCheckpointRejectsChangedSourceAncestor(t *testing.T) {
+	s, db, source, link, _ := fixture(t)
+	op, err := s.Delete(context.Background(), Request{EpisodeID: 1, Intention: "wanted"})
+	require.Error(t, err)
+	require.NoError(t, os.Remove(source))
+	require.NoError(t, os.Remove(s.Options.DownloadRoot))
+	require.NoError(t, os.Symlink(t.TempDir(), s.Options.DownloadRoot))
+	_, err = db.Exec("UPDATE release_deletion_operations SET stage='links' WHERE id=?", op.ID)
+	require.NoError(t, err)
+	restarted := NewWithOptions(db, s.Logger, s.Options)
+	op, err = restarted.Resume(context.Background(), op.ID)
+	require.ErrorIs(t, err, ErrUnsafe)
+	require.Equal(t, "failed", op.Status)
+	require.FileExists(t, link)
+}
+
+func TestFinalizationPreservesReaddedTorrent(t *testing.T) {
+	s, db, source, link, _ := fixture(t)
+	op, err := s.Delete(context.Background(), Request{EpisodeID: 1, Intention: "wanted"})
+	require.Error(t, err)
+	require.NoError(t, os.Remove(source))
+	require.NoError(t, os.Remove(link))
+	_, err = db.Exec("UPDATE release_deletion_operations SET stage='finalizing' WHERE id=?", op.ID)
+	require.NoError(t, err)
+	client := s.Options.Client.(*qb.QBittorrentService)
+	deleted := false
+	client.APIService.Client.Transport = transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/api/v2/torrents/info" {
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`[{"hash":"abc"}]`)), Request: r}, nil
+		}
+		if r.URL.Path == "/api/v2/torrents/delete" {
+			deleted = true
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	})
+	restarted := NewWithOptions(db, s.Logger, s.Options)
+	op, err = restarted.Resume(context.Background(), op.ID)
+	require.ErrorIs(t, err, ErrUnsafe)
+	require.Equal(t, "failed", op.Status)
+	require.False(t, deleted, "a readded torrent must be preserved")
+	var associations int
+	require.NoError(t, db.Get(&associations, "SELECT count(*) FROM episode_torrents"))
+	require.Equal(t, 1, associations)
+}
