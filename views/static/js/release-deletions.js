@@ -8,6 +8,7 @@
     function follow(state, id) { state.followed[id] = true; }
     function description(op) {
         if (op.status === 'completed') return { type: 'success', message: 'Release deleted' };
+        if (op.status === 'failed' && op.next_attempt_at > 0 && op.retryable) return { type: 'info', message: 'Release deletion is incomplete; an automatic retry is scheduled' };
         if (op.status === 'failed') return { type: 'error', message: 'Release deletion is incomplete. Check its status and retry.' };
         return { type: 'info', message: 'Release deletion accepted; cleanup is pending' };
     }

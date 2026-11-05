@@ -518,12 +518,18 @@ func (s *Service) run(ctx context.Context, op Operation) (Operation, error) {
 	if err := s.checkpoint(&op, "running", op.Stage, nil); err != nil {
 		return op, err
 	}
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
 	if op.Stage == "prepared" {
 		var torrents []qs.CheckTorrentResponse
 		if err := s.Options.Client.CheckTorrentsWithHash("", op.Hash, &torrents); err != nil {
 			return fail(err)
 		}
 		if len(torrents) > 0 {
+			if err := ctx.Err(); err != nil {
+				return fail(err)
+			}
 			if err := s.Options.Client.DeleteTorrent(op.Hash, true); err != nil {
 				return fail(err)
 			}
@@ -535,6 +541,9 @@ func (s *Service) run(ctx context.Context, op Operation) (Operation, error) {
 	if op.Stage == "confirming" {
 		deadline := time.Now().Add(s.Options.ConfirmationTimeout)
 		for {
+			if err := ctx.Err(); err != nil {
+				return fail(err)
+			}
 			var torrents []qs.CheckTorrentResponse
 			err := s.Options.Client.CheckTorrentsWithHash("", op.Hash, &torrents)
 			if err != nil {

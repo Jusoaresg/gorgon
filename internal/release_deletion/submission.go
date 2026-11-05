@@ -113,11 +113,14 @@ func (s *Service) SubmitRetry(ctx context.Context, id string) (Operation, error)
 		return Operation{}, err
 	}
 	// This atomic transition never rewinds an executing operation or completed result.
-	_, err := s.DB.ExecContext(ctx, `UPDATE release_deletion_operations SET status='pending',retry_count=0,next_attempt_at=0,last_error='',updated_at=?,version=version+1 WHERE id=? AND status='failed'`, s.now().Unix(), id)
+	_, err := s.DB.ExecContext(ctx, `UPDATE release_deletion_operations SET status='pending',retry_count=0,next_attempt_at=0,last_error='',updated_at=?,version=version+1 WHERE id=? AND status='failed' AND intention!='upgrade'`, s.now().Unix(), id)
 	if err != nil {
 		return Operation{}, err
 	}
 	op, err := s.Get(id)
+	if err == nil && op.Intention == "upgrade" {
+		return Operation{}, sql.ErrNoRows
+	}
 	if err == nil {
 		s.notify(op)
 	}
@@ -139,6 +142,9 @@ func HTTPStatus(op Operation, err error) int {
 	if op.Status == "completed" {
 		return http.StatusOK
 	}
+	if op.Status == "failed" && op.NextAttemptAt > 0 && op.Retryable {
+		return http.StatusAccepted
+	}
 	if op.Status == "failed" {
 		return http.StatusConflict
 	}
@@ -157,6 +163,9 @@ func Response(op Operation, err error) map[string]any {
 	case errors.Is(err, sql.ErrNoRows):
 		message = "Deletion operation was not found"
 		code = "operation_not_found"
+	case err == nil && op.Status == "failed" && op.NextAttemptAt > 0 && op.Retryable:
+		message = "Release deletion is incomplete; an automatic retry is scheduled"
+		code = "deletion_retry_pending"
 	case err != nil || op.Status == "failed":
 		message = "Release deletion is incomplete; inspect its status and retry when resolved"
 		code = "deletion_incomplete"

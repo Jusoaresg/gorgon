@@ -45,6 +45,9 @@ func (h *Handler) List(c echo.Context) error {
 }
 func (h *Handler) Get(c echo.Context) error {
 	op, err := h.service().Get(c.Param("id"))
+	if err == nil && op.Intention == "upgrade" {
+		err = sql.ErrNoRows
+	}
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, sql.ErrNoRows) {
