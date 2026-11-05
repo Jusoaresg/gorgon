@@ -63,7 +63,7 @@
     {{ else }}
     <div class="downloads-list">
         {{ range $item := $data.Items }}
-        <div class="download-card" id="download-card-{{ $item.Torrent.Hash }}">
+        <div class="download-card" data-download-hash="{{ $item.Torrent.Hash }}" id="download-card-{{ $item.Torrent.Hash }}">
             <div class="download-card-poster">
                 {{ if and $item.Episode $item.Episode.ShowImage }}
                 <img src="{{ $item.Episode.ShowImage }}" alt="{{ $item.Episode.ShowName }}" loading="lazy">

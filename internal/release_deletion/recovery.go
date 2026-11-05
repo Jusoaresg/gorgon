@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jusoaresg/gorgon/internal/episode/events"
+	"github.com/jusoaresg/gorgon/pkg/handler"
 )
 
 const MaxAutomaticAttempts = 5
@@ -91,6 +92,7 @@ func (s *Service) notify(op Operation) {
 		}
 		episode.EmitEpisodeTrackingUpdatedEvent(op.EpisodeID, tracking, "")
 	}
+	handler.SendWebSocketMessage(map[string]any{"type": "ReleaseDeletionUpdated", "operation": op})
 	if s.Options.OnChange != nil {
 		s.Options.OnChange(op)
 	}
