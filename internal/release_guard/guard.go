@@ -31,11 +31,20 @@ func TryLock(_ *sqlx.DB) (func(), bool) {
 // Check must be called while holding the gate, before reading mutable ownership.
 // Failed operations remain protected until explicitly recovered and finalized.
 func Check(db *sqlx.DB, episodeID int64, hash string) error {
+	return check(db, episodeID, hash, false)
+}
+
+// CheckUpgradeImport permits only the importer whose candidate was verified against
+// its durable upgrade snapshot. All other operations still protect their targets.
+func CheckUpgradeImport(db *sqlx.DB, episodeID int64, hash string) error {
+	return check(db, episodeID, hash, true)
+}
+func check(db *sqlx.DB, episodeID int64, hash string, importingUpgrade bool) error {
 	if db == nil {
 		return fmt.Errorf("release database unavailable")
 	}
 	var count int
-	err := db.Get(&count, `SELECT count(*) FROM release_deletion_operations o WHERE o.status!='completed' AND ((?!=0 AND o.episode_id=?) OR (?!='' AND lower(trim(o.hash))=?) OR (?!=0 AND EXISTS (SELECT 1 FROM episode_torrents t WHERE t.episode_id=? AND lower(trim(t.hash))=lower(trim(o.hash)))))`, episodeID, episodeID, strings.TrimSpace(hash), strings.ToLower(strings.TrimSpace(hash)), episodeID, episodeID)
+	err := db.Get(&count, `SELECT count(*) FROM release_deletion_operations o WHERE o.status!='completed' AND NOT (? AND o.intention='upgrade' AND o.episode_id=?) AND ((?!=0 AND o.episode_id=?) OR (?!='' AND lower(trim(o.hash))=?) OR (?!=0 AND EXISTS (SELECT 1 FROM episode_torrents t WHERE t.episode_id=? AND lower(trim(t.hash))=lower(trim(o.hash)))))`, importingUpgrade, episodeID, episodeID, episodeID, strings.TrimSpace(hash), strings.ToLower(strings.TrimSpace(hash)), episodeID, episodeID)
 	if err != nil {
 		return err
 	}

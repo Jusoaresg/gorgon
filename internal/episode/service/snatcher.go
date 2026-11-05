@@ -1,8 +1,10 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"github.com/jmoiron/sqlx"
+	"github.com/jusoaresg/gorgon/internal/release_deletion"
 	"github.com/jusoaresg/gorgon/internal/release_guard"
 	"log/slog"
 	"sync"
@@ -43,15 +45,37 @@ func SnatchEpisodeWithUpgrade(episode *model.Episode, response prowlarrSchema.Se
 	return snatchEpisodeLocked(db, episode, response, score, upgrade)
 }
 
-func snatchEpisodeLocked(db *sqlx.DB, episode *model.Episode, response prowlarrSchema.SearchResponse, score int, upgrade *UpgradeInfo) error {
-	if err := validateSnatch(db, episode, response.InfoHash); err != nil {
-		return err
+func snatchEpisodeLocked(db *sqlx.DB, episode *model.Episode, response prowlarrSchema.SearchResponse, score int, upgrade *UpgradeInfo, prepared ...release_deletion.Operation) error {
+	if len(prepared) == 0 {
+		if err := validateSnatch(db, episode, response.InfoHash, upgrade != nil); err != nil {
+			return err
+		}
 	}
 	logger := config.GetLogger()
 
 	episodeRepo := repository.NewEpisodeRepository(db)
 	episodeTorrentRepo := episodeTorrentRepository.NewEpisodeTorrentRepository(db)
 
+	var snapshot release_deletion.Operation
+	var deletion *release_deletion.Service
+	if upgrade != nil && len(prepared) == 0 {
+		var err error
+		deletion, err = release_deletion.New(db, logger)
+		if err != nil {
+			return err
+		}
+		snapshot, err = deletion.PrepareUpgradeSnapshotWhileGuarded(context.Background(), episode.ID, response.InfoHash)
+		if err != nil {
+			return err
+		}
+	}
+	defer func() {
+		if deletion != nil {
+			if err := deletion.AbortUpgradeSnapshotWhileGuarded(snapshot); err != nil {
+				logger.Error("failed to cancel unstarted upgrade snapshot", "error", err)
+			}
+		}
+	}()
 	episode.Tracking = model.TrackingSnatched
 	episodeTorrent := episodeTorrentModel.FromSearchResponse(episode.ID, response, score)
 
@@ -79,16 +103,16 @@ func snatchEpisodeLocked(db *sqlx.DB, episode *model.Episode, response prowlarrS
 
 	episodeEvents.EmitEpisodeTrackingUpdatedEvent(episode.ID, model.TrackingSnatched, episodeTorrent.InfoUrl)
 
+	tgService, telegramErr := telegramService.NewTelegramService(logger)
+	if telegramErr != nil {
+		return nil
+	}
+	showRepo := showRepository.NewShowRepository(db)
+	showName := ""
+	if show, err := showRepo.GetById(episode.ShowID); err == nil {
+		showName = show.Name
+	}
 	go func() {
-		tgService, err := telegramService.NewTelegramService(logger)
-		if err != nil {
-			return
-		}
-		showRepo := showRepository.NewShowRepository(db)
-		showName := ""
-		if show, err := showRepo.GetById(episode.ShowID); err == nil {
-			showName = show.Name
-		}
 		input := telegramSchema.EpisodeSnatchedTemplateInput{
 			EpisodeID:    episode.ID,
 			ShowName:     showName,
@@ -114,7 +138,8 @@ func snatchEpisodeLocked(db *sqlx.DB, episode *model.Episode, response prowlarrS
 	return nil
 }
 
-func validateSnatch(db *sqlx.DB, episode *model.Episode, hash string) error {
+func validateSnatch(db *sqlx.DB, episode *model.Episode, hash string, upgrading ...bool) error {
+	upgrade := len(upgrading) > 0 && upgrading[0]
 	if err := release_guard.Check(db, episode.ID, hash); err != nil {
 		return err
 	}
@@ -122,14 +147,14 @@ func validateSnatch(db *sqlx.DB, episode *model.Episode, hash string) error {
 	if err != nil {
 		return err
 	}
-	if current.Tracking != episode.Tracking || current.Tracking == model.TrackingSkipped || current.Tracking == model.TrackingDownloaded || current.Tracking == model.TrackingSnatched {
+	if current.Tracking != episode.Tracking || current.Tracking == model.TrackingSkipped || (current.Tracking == model.TrackingDownloaded && !upgrade) || current.Tracking == model.TrackingSnatched {
 		return release_guard.ErrStale
 	}
 	var installed int
 	if err = db.Get(&installed, "SELECT count(*) FROM episode_contents WHERE episode_id=?", episode.ID); err != nil {
 		return err
 	}
-	if installed > 0 {
+	if installed > 0 && !upgrade {
 		return fmt.Errorf("existing release requires verified deletion before replacement")
 	}
 	return nil
