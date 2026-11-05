@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"github.com/jusoaresg/gorgon/internal/release_guard"
 	"log/slog"
 
 	"github.com/jusoaresg/gorgon/config"
@@ -88,6 +89,8 @@ func (sm *ShowManagerService) UpdateShowWithRelations(
 	seasonsDTO []dtos.SeasonDto,
 	episodes []dtos.EpisodeDto,
 ) (err error) {
+	unlock := release_guard.Lock(sm.DB)
+	defer unlock()
 	aggregatedShow, err := sm.ShowAggregator.GetShowWithRelationsByTvMazeId(showDTO.TvMazeID)
 	if err != nil {
 		sm.logger.Error(
@@ -99,6 +102,9 @@ func (sm *ShowManagerService) UpdateShowWithRelations(
 		return err
 	}
 
+	if err = release_guard.CheckShow(sm.DB, aggregatedShow.Show.ID); err != nil {
+		return err
+	}
 	oldShowName := aggregatedShow.Show.Name
 	showAliasesModel := aggregatedShow.ShowAliases
 	episodesModel := aggregatedShow.Episodes
@@ -391,7 +397,9 @@ func (sm *ShowManagerService) syncShowAndEpisodeFiles(
 			}
 			if newPath != "" && content.FilePath != newPath {
 				content.FilePath = newPath
-				_ = sm.EpisodeContentRepo.Update(content)
+				if updateErr := sm.EpisodeContentRepo.Update(content); updateErr != nil {
+					sm.logger.Warn("failed to persist reconciled episode path", "episode_id", diff.newEp.ID, "error", updateErr)
+				}
 			}
 		}
 	}

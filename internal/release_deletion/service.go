@@ -7,11 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jusoaresg/gorgon/internal/release_guard"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -80,8 +80,6 @@ type Service struct {
 	Options Options
 }
 
-var executionMu sync.Mutex
-
 func New(db *sqlx.DB, logger *slog.Logger) (*Service, error) {
 	cfg, err := config.LoadConfig()
 	if err != nil {
@@ -120,8 +118,15 @@ func (s *Service) Get(id string) (Operation, error) {
 	return op, err
 }
 func (s *Service) Delete(ctx context.Context, r Request) (Operation, error) {
-	executionMu.Lock()
-	defer executionMu.Unlock()
+	unlock := release_guard.Lock(s.DB)
+	defer unlock()
+	return s.DeleteWhileGuarded(ctx, r)
+}
+
+// DeleteWhileGuarded coordinates acquisition rollback for callers already holding
+// release_guard.Lock across proof of ownership, acquisition and persistence.
+// Calling it without that guard is invalid. Other callers must use Delete.
+func (s *Service) DeleteWhileGuarded(ctx context.Context, r Request) (Operation, error) {
 	op, err := s.prepare(r)
 	if err != nil {
 		return op, err
@@ -129,8 +134,8 @@ func (s *Service) Delete(ctx context.Context, r Request) (Operation, error) {
 	return s.run(ctx, op)
 }
 func (s *Service) Resume(ctx context.Context, id string) (Operation, error) {
-	executionMu.Lock()
-	defer executionMu.Unlock()
+	unlock := release_guard.Lock(s.DB)
+	defer unlock()
 	op, err := s.Get(id)
 	if err != nil {
 		return op, err

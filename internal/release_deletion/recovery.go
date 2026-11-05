@@ -3,6 +3,7 @@ package release_deletion
 import (
 	"context"
 	"errors"
+	"github.com/jusoaresg/gorgon/internal/release_guard"
 	"os"
 	"time"
 
@@ -32,8 +33,8 @@ func (s *Service) List() ([]Operation, error) {
 // Retry gives an actionable or exhausted operation another bounded retry budget.
 // The same manifest and intention are retained; completed operations remain unchanged.
 func (s *Service) Retry(ctx context.Context, id string) (Operation, error) {
-	executionMu.Lock()
-	defer executionMu.Unlock()
+	unlock := release_guard.Lock(s.DB)
+	defer unlock()
 	op, err := s.Get(id)
 	if err != nil {
 		return op, err
