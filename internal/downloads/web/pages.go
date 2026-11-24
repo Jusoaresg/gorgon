@@ -177,43 +177,69 @@ func (h *Handler) RemoveDownload(c echo.Context) error {
 		return nil
 	}
 
+	toastMsg := "Download removed"
 	episodeTorrent, err := h.EpisodeTorrentRepo.GetByHash(hash)
 	if err == nil && episodeTorrent.EpisodeId != 0 {
-		if err := h.EpisodeTorrentRepo.DeleteByEpisodeID(episodeTorrent.EpisodeId); err != nil {
-			logger.Error("failed to delete episode torrent", slog.String("error", err.Error()))
-		}
-
 		episode, err := h.EpisodeRepo.GetByID(episodeTorrent.EpisodeId)
 		if err == nil {
-			cfg, err := config.LoadConfig()
-			if err == nil {
-				showRepo := showRepository.NewShowRepository(h.DB)
-				show, err := showRepo.GetById(episode.ShowID)
+			epContentRepo := epContentRepository.NewEpisodeContentRepository(h.DB)
+			episodeContents, _ := epContentRepo.ListByEpisodeId(episode.ID)
+			hasDownloadedFallback := episode.Tracking == episodeModel.TrackingSnatched && (episodeTorrent.HasPrevious() || len(episodeContents) > 0)
+
+			if hasDownloadedFallback {
+				var restoredInfoUrl string
+				if episodeTorrent.HasPrevious() {
+					if _, err := h.EpisodeTorrentRepo.RestorePrevious(episode.ID); err != nil {
+						logger.Error("failed to restore previous episode torrent", slog.String("error", err.Error()))
+					} else {
+						restoredInfoUrl = episodeTorrent.PreviousInfoUrl
+					}
+				} else {
+					_ = h.EpisodeTorrentRepo.DeleteByEpisodeID(episode.ID)
+				}
+
+				episode.Tracking = episodeModel.TrackingDownloaded
+				if err := h.EpisodeRepo.Update(episode); err != nil {
+					logger.Error("failed to restore episode tracking to downloaded", slog.Int64("episode_id", episode.ID), slog.String("error", err.Error()))
+				} else {
+					episodeEvents.EmitEpisodeTrackingUpdatedEvent(episode.ID, episode.Tracking, restoredInfoUrl)
+				}
+				toastMsg = "Upgrade cancelled — kept previous episode"
+			} else {
+				if err := h.EpisodeTorrentRepo.DeleteByEpisodeID(episodeTorrent.EpisodeId); err != nil {
+					logger.Error("failed to delete episode torrent", slog.String("error", err.Error()))
+				}
+
+				cfg, err := config.LoadConfig()
 				if err == nil {
-					epContentRepo := epContentRepository.NewEpisodeContentRepository(h.DB)
-					episodeContents, err := epContentRepo.ListByEpisodeId(episode.ID)
+					showRepo := showRepository.NewShowRepository(h.DB)
+					show, err := showRepo.GetById(episode.ShowID)
 					if err == nil {
 						for _, ec := range episodeContents {
 							_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, episode, ec)
 							_ = epContentRepo.DeleteById(ec.ID)
 						}
+						_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, episode, epContentModel.EpisodeContent{})
+						_ = utils.CleanBrokenSymlinksInSeason(cfg.ShowsFolder, show.Name, episode.Season)
 					}
-					_ = utils.DeleteSymlink(cfg.ShowsFolder, show.Name, episode, epContentModel.EpisodeContent{})
-					_ = utils.CleanBrokenSymlinksInSeason(cfg.ShowsFolder, show.Name, episode.Season)
+				}
+
+				episode.Tracking = episodeModel.TrackingSkipped
+				if err := h.EpisodeRepo.Update(episode); err != nil {
+					logger.Error("failed to reset episode tracking to skipped", slog.Int64("episode_id", episode.ID), slog.String("error", err.Error()))
+				} else {
+					episodeEvents.EmitEpisodeTrackingUpdatedEvent(episode.ID, episode.Tracking, "")
 				}
 			}
-
-			episode.Tracking = episodeModel.TrackingSkipped
-			if err := h.EpisodeRepo.Update(episode); err != nil {
-				logger.Error("failed to reset episode tracking to skipped", slog.Int64("episode_id", episode.ID), slog.String("error", err.Error()))
-			} else {
-				episodeEvents.EmitEpisodeTrackingUpdatedEvent(episode.ID, episode.Tracking, "")
+		} else {
+			if err := h.EpisodeTorrentRepo.DeleteByEpisodeID(episodeTorrent.EpisodeId); err != nil {
+				logger.Error("failed to delete episode torrent", slog.String("error", err.Error()))
 			}
 		}
 	}
 
 	schemas.SendSuccess(c, "Remove Download", map[string]any{
-		"toastMessage": "Download removed",
+		"toastMessage": toastMsg,
 	})
 	return nil
 }
@@ -240,6 +266,7 @@ func (h *Handler) BlacklistDownload(c echo.Context) error {
 		return nil
 	}
 
+	toastMsg := "Release blacklisted — searching for another"
 	episodeTorrent, err := h.EpisodeTorrentRepo.GetByHash(hash)
 	if err == nil && episodeTorrent.EpisodeId != 0 {
 		episode, epErr := h.EpisodeRepo.GetByID(episodeTorrent.EpisodeId)
@@ -256,11 +283,26 @@ func (h *Handler) BlacklistDownload(c echo.Context) error {
 				CreatedAt:    time.Now().Unix(),
 			})
 
-			_ = h.EpisodeTorrentRepo.DeleteByEpisodeID(episode.ID)
+			epContentRepo := epContentRepository.NewEpisodeContentRepository(h.DB)
+			episodeContents, _ := epContentRepo.ListByEpisodeId(episode.ID)
+			hasDownloadedFallback := episode.Tracking == episodeModel.TrackingSnatched && (episodeTorrent.HasPrevious() || len(episodeContents) > 0)
 
-			episode.Tracking = episodeModel.TrackingWanted
+			var restoredInfoUrl string
+			if hasDownloadedFallback {
+				if episodeTorrent.HasPrevious() {
+					_, _ = h.EpisodeTorrentRepo.RestorePrevious(episode.ID)
+					restoredInfoUrl = episodeTorrent.PreviousInfoUrl
+				} else {
+					_ = h.EpisodeTorrentRepo.DeleteByEpisodeID(episode.ID)
+				}
+				episode.Tracking = episodeModel.TrackingDownloaded
+			} else {
+				_ = h.EpisodeTorrentRepo.DeleteByEpisodeID(episode.ID)
+				episode.Tracking = episodeModel.TrackingWanted
+			}
+
 			if err := h.EpisodeRepo.Update(episode); err == nil {
-				episodeEvents.EmitEpisodeTrackingUpdatedEvent(episode.ID, episode.Tracking, "")
+				episodeEvents.EmitEpisodeTrackingUpdatedEvent(episode.ID, episode.Tracking, restoredInfoUrl)
 			}
 
 			showRepo := showRepository.NewShowRepository(h.DB)
@@ -285,22 +327,28 @@ func (h *Handler) BlacklistDownload(c echo.Context) error {
 				})
 			}(episode, episodeTorrent.Title, episodeTorrent.InfoUrl, episodeTorrent.Indexer)
 
-			searchSvc := episodeService.NewEpisodeSearchService(
-				h.DB,
-				logger,
-				&episodeService.EpisodeSearcher{},
-				episodeService.NewEpisodeDownloader(h.DB),
-				h.EpisodeRepo,
-				showRepo,
-			)
-			go func(epID int) {
-				_ = searchSvc.ProcessSingleEpisode(epID)
-			}(int(episode.ID))
+			if !episodeTorrent.IsManual {
+				searchSvc := episodeService.NewEpisodeSearchService(
+					h.DB,
+					logger,
+					&episodeService.EpisodeSearcher{},
+					episodeService.NewEpisodeDownloader(h.DB),
+					h.EpisodeRepo,
+					showRepo,
+				)
+				go func(epID int) {
+					_ = searchSvc.ProcessSingleEpisode(epID)
+				}(int(episode.ID))
+			} else if hasDownloadedFallback {
+				toastMsg = "Release blacklisted — kept previous episode"
+			} else {
+				toastMsg = "Release blacklisted"
+			}
 		}
 	}
 
 	schemas.SendSuccess(c, "Blacklist Download", map[string]any{
-		"toastMessage": "Release blacklisted — searching for another",
+		"toastMessage": toastMsg,
 	})
 	return nil
 }
