@@ -345,10 +345,36 @@ func (q *QBittorrentService) AddTorrent(torrentUrl string) error {
 	return nil
 }
 
+type TorrentDeleter interface {
+	DeleteTorrent(hash string, deleteFile bool) error
+	DeleteTorrents(hashes []string, deleteFile bool) error
+}
+
 func (q *QBittorrentService) DeleteTorrent(hash string, deleteFile bool) error {
+	return q.DeleteTorrents([]string{hash}, deleteFile)
+}
+
+func (q *QBittorrentService) DeleteTorrents(hashes []string, deleteFile bool) error {
+	normalized := make([]string, 0, len(hashes))
+	seen := make(map[string]struct{}, len(hashes))
+	for _, h := range hashes {
+		clean := strings.ToLower(strings.TrimSpace(h))
+		if clean == "" {
+			continue
+		}
+		if _, exists := seen[clean]; exists {
+			continue
+		}
+		seen[clean] = struct{}{}
+		normalized = append(normalized, clean)
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+
 	resp, err := q.doAuthenticatedRequest(func() (*http.Response, error) {
 		form := url.Values{}
-		form.Add("hashes", hash)
+		form.Add("hashes", strings.Join(normalized, "|"))
 		form.Add("deleteFiles", fmt.Sprintf("%t", deleteFile))
 
 		headers := map[string]string{
@@ -357,14 +383,20 @@ func (q *QBittorrentService) DeleteTorrent(hash string, deleteFile bool) error {
 			"Referer":      fmt.Sprintf("%s:%s", q.host, q.port),
 		}
 
-		return q.APIService.Post("/api/v2/torrents/delete", form.Encode(), nil, headers)
+		return q.APIService.PostRaw(
+			"/api/v2/torrents/delete",
+			"application/x-www-form-urlencoded",
+			strings.NewReader(form.Encode()),
+			headers,
+		)
 	})
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to delete torrent (status=%d)", resp.StatusCode)
+		return fmt.Errorf("failed to delete torrent (status=%d): %s", resp.StatusCode, responseBodySnippet(resp))
 	}
 
 	return nil

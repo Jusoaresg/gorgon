@@ -298,6 +298,74 @@ func TestDeleteTorrent_WrongMethod(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestDeleteTorrents_BatchNormalizesAndDeduplicates(t *testing.T) {
+	logger := newTestLogger()
+
+	var receivedHashes string
+	var receivedDeleteFiles string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			http.SetCookie(w, &http.Cookie{Name: "QBT_SID_9191", Value: "test-sid", Path: "/"})
+			w.WriteHeader(http.StatusNoContent)
+		case "/api/v2/torrents/delete":
+			r.ParseForm()
+			receivedHashes = r.FormValue("hashes")
+			receivedDeleteFiles = r.FormValue("deleteFiles")
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	svc := newTestService(server.URL, logger)
+	err := svc.DeleteTorrents([]string{"  ABC123 ", "", "abc123", "DEF456"}, true)
+	require.NoError(t, err)
+	assert.Equal(t, "abc123|def456", receivedHashes)
+	assert.Equal(t, "true", receivedDeleteFiles)
+}
+
+func TestDeleteTorrents_EmptyHashesNoOp(t *testing.T) {
+	logger := newTestLogger()
+
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	svc := newTestService(server.URL, logger)
+	err := svc.DeleteTorrents([]string{"", "   "}, true)
+	require.NoError(t, err)
+	assert.False(t, called)
+}
+
+func TestDeleteTorrents_ServerErrorIncludesBody(t *testing.T) {
+	logger := newTestLogger()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			http.SetCookie(w, &http.Cookie{Name: "QBT_SID_9191", Value: "test-sid", Path: "/"})
+			w.WriteHeader(http.StatusNoContent)
+		case "/api/v2/torrents/delete":
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte("disk error"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	svc := newTestService(server.URL, logger)
+	err := svc.DeleteTorrent("abc123", true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "status=500")
+	assert.Contains(t, err.Error(), "disk error")
+}
+
 func TestCheckTorrents_Success(t *testing.T) {
 	logger := newTestLogger()
 
