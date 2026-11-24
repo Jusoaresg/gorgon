@@ -28,7 +28,14 @@ func (s *EpisodeTorrentRepository) Upsert(t model.EpisodeTorrent) (int64, error)
 		info_url,
 		publish_date,
 		score,
-		created_at
+		created_at,
+		is_manual,
+		previous_hash,
+		previous_title,
+		previous_indexer,
+		previous_info_url,
+		previous_publish_date,
+		previous_score
 	)
 	VALUES (
 		:episode_id,
@@ -38,7 +45,14 @@ func (s *EpisodeTorrentRepository) Upsert(t model.EpisodeTorrent) (int64, error)
 		:info_url,
 		:publish_date,
 		:score,
-		:created_at
+		:created_at,
+		:is_manual,
+		:previous_hash,
+		:previous_title,
+		:previous_indexer,
+		:previous_info_url,
+		:previous_publish_date,
+		:previous_score
 	)
 	ON CONFLICT(episode_id) DO UPDATE SET
 		hash = :hash,
@@ -49,7 +63,14 @@ func (s *EpisodeTorrentRepository) Upsert(t model.EpisodeTorrent) (int64, error)
 		score = :score,
 		created_at = :created_at,
 		stalled_since = 0,
-		last_amount_left = -1
+		last_amount_left = -1,
+		is_manual = :is_manual,
+		previous_hash = :previous_hash,
+		previous_title = :previous_title,
+		previous_indexer = :previous_indexer,
+		previous_info_url = :previous_info_url,
+		previous_publish_date = :previous_publish_date,
+		previous_score = :previous_score
 	`
 	result, err := s.db.NamedExec(query, t)
 	if err != nil {
@@ -82,7 +103,14 @@ func (s *EpisodeTorrentRepository) UpsertTx(tx *sqlx.Tx, t model.EpisodeTorrent)
 		info_url,
 		publish_date,
 		score,
-		created_at
+		created_at,
+		is_manual,
+		previous_hash,
+		previous_title,
+		previous_indexer,
+		previous_info_url,
+		previous_publish_date,
+		previous_score
 	)
 	VALUES (
 		:episode_id,
@@ -92,7 +120,14 @@ func (s *EpisodeTorrentRepository) UpsertTx(tx *sqlx.Tx, t model.EpisodeTorrent)
 		:info_url,
 		:publish_date,
 		:score,
-		:created_at
+		:created_at,
+		:is_manual,
+		:previous_hash,
+		:previous_title,
+		:previous_indexer,
+		:previous_info_url,
+		:previous_publish_date,
+		:previous_score
 	)
 	ON CONFLICT(episode_id) DO UPDATE SET
 		hash = :hash,
@@ -103,7 +138,14 @@ func (s *EpisodeTorrentRepository) UpsertTx(tx *sqlx.Tx, t model.EpisodeTorrent)
 		score = :score,
 		created_at = :created_at,
 		stalled_since = 0,
-		last_amount_left = -1
+		last_amount_left = -1,
+		is_manual = :is_manual,
+		previous_hash = :previous_hash,
+		previous_title = :previous_title,
+		previous_indexer = :previous_indexer,
+		previous_info_url = :previous_info_url,
+		previous_publish_date = :previous_publish_date,
+		previous_score = :previous_score
 	`
 	result, err := tx.NamedExec(query, t)
 	if err != nil {
@@ -172,6 +214,60 @@ func (s *EpisodeTorrentRepository) UpdateStallState(episodeID int64, stalledSinc
 	return err
 }
 
+func (s *EpisodeTorrentRepository) ClearPreviousTx(tx *sqlx.Tx, episodeID int64) error {
+	_, err := tx.Exec(`
+		UPDATE episode_torrents
+		SET previous_hash = '',
+		    previous_title = '',
+		    previous_indexer = '',
+		    previous_info_url = '',
+		    previous_publish_date = '',
+		    previous_score = 0
+		WHERE episode_id = ?
+	`, episodeID)
+	return err
+}
+
+func (s *EpisodeTorrentRepository) ClearPrevious(episodeID int64) error {
+	_, err := s.db.Exec(`
+		UPDATE episode_torrents
+		SET previous_hash = '',
+		    previous_title = '',
+		    previous_indexer = '',
+		    previous_info_url = '',
+		    previous_publish_date = '',
+		    previous_score = 0
+		WHERE episode_id = ?
+	`, episodeID)
+	return err
+}
+
+func (s *EpisodeTorrentRepository) RestorePrevious(episodeID int64) (model.EpisodeTorrent, error) {
+	_, err := s.db.Exec(`
+		UPDATE episode_torrents
+		SET hash = previous_hash,
+		    title = previous_title,
+		    indexer = previous_indexer,
+		    info_url = previous_info_url,
+		    publish_date = previous_publish_date,
+		    score = previous_score,
+		    stalled_since = 0,
+		    last_amount_left = -1,
+		    is_manual = 0,
+		    previous_hash = '',
+		    previous_title = '',
+		    previous_indexer = '',
+		    previous_info_url = '',
+		    previous_publish_date = '',
+		    previous_score = 0
+		WHERE episode_id = ? AND previous_hash != ''
+	`, episodeID)
+	if err != nil {
+		return model.EpisodeTorrent{}, err
+	}
+	return s.GetByEpisodeID(episodeID)
+}
+
 func (s *EpisodeTorrentRepository) DeleteByEpisodeID(episodeID int64) error {
 	if _, err := s.db.Exec("DELETE FROM episode_torrents WHERE episode_id = ?", episodeID); err != nil {
 		return err
@@ -206,6 +302,9 @@ type EpisodeTorrentRepositoryInterface interface {
 	Upsert(t model.EpisodeTorrent) (int64, error)
 	UpsertTx(tx *sqlx.Tx, t model.EpisodeTorrent) (int64, error)
 	UpdateStallState(episodeID int64, stalledSince, lastAmountLeft int64) error
+	ClearPrevious(episodeID int64) error
+	ClearPreviousTx(tx *sqlx.Tx, episodeID int64) error
+	RestorePrevious(episodeID int64) (model.EpisodeTorrent, error)
 	GetByEpisodeID(episodeID int64) (model.EpisodeTorrent, error)
 	GetByHash(hash string) (model.EpisodeTorrent, error)
 	ListByEpisodeIDs(episodeIDs []int64) ([]model.EpisodeTorrent, error)

@@ -164,3 +164,63 @@ func TestEpisodeTorrentRepository_UpdateStallState(t *testing.T) {
 	assert.Equal(t, int64(0), resetResult.StalledSince)
 	assert.Equal(t, int64(-1), resetResult.LastAmountLeft)
 }
+
+func TestEpisodeTorrentRepository_PreviousSnapshot_RestoreAndClear(t *testing.T) {
+	db, repo := getEpTorrentRepo()
+
+	oldTorrent := MakeEpisodeTorrentWithDeps(db)
+	_, err := repo.Upsert(oldTorrent)
+	assert.NoError(t, err)
+
+	newTorrent := model.EpisodeTorrent{
+		EpisodeId:   oldTorrent.EpisodeId,
+		Hash:        "newhash999",
+		Title:       "Show.S01E01.2160p.WEB-DL",
+		Indexer:     "NewIndexer",
+		InfoUrl:     "https://indexer.info/release/2",
+		PublishDate: "2026-08-02T00:00:00Z",
+		Score:       90,
+		CreatedAt:   1754001000,
+		IsManual:    true,
+	}
+	newTorrent.SnapshotPreviousFrom(oldTorrent)
+
+	_, err = repo.Upsert(newTorrent)
+	assert.NoError(t, err)
+
+	saved, err := repo.GetByEpisodeID(oldTorrent.EpisodeId)
+	assert.NoError(t, err)
+	assert.True(t, saved.IsManual)
+	assert.True(t, saved.HasPrevious())
+	assert.Equal(t, oldTorrent.Hash, saved.PreviousHash)
+	assert.Equal(t, oldTorrent.Title, saved.PreviousTitle)
+	assert.Equal(t, oldTorrent.Indexer, saved.PreviousIndexer)
+	assert.Equal(t, oldTorrent.InfoUrl, saved.PreviousInfoUrl)
+	assert.Equal(t, oldTorrent.PublishDate, saved.PreviousPublishDate)
+	assert.Equal(t, oldTorrent.Score, saved.PreviousScore)
+
+	// RestorePrevious should revert back to oldTorrent and clear previous_* & is_manual
+	restored, err := repo.RestorePrevious(oldTorrent.EpisodeId)
+	assert.NoError(t, err)
+	assert.Equal(t, oldTorrent.Hash, restored.Hash)
+	assert.Equal(t, oldTorrent.Title, restored.Title)
+	assert.Equal(t, oldTorrent.Indexer, restored.Indexer)
+	assert.Equal(t, oldTorrent.InfoUrl, restored.InfoUrl)
+	assert.Equal(t, oldTorrent.PublishDate, restored.PublishDate)
+	assert.Equal(t, oldTorrent.Score, restored.Score)
+	assert.False(t, restored.IsManual)
+	assert.False(t, restored.HasPrevious())
+
+	// Re-apply snapshot and test ClearPrevious
+	_, err = repo.Upsert(newTorrent)
+	assert.NoError(t, err)
+	err = repo.ClearPrevious(oldTorrent.EpisodeId)
+	assert.NoError(t, err)
+
+	cleared, err := repo.GetByEpisodeID(oldTorrent.EpisodeId)
+	assert.NoError(t, err)
+	assert.Equal(t, newTorrent.Hash, cleared.Hash)
+	assert.False(t, cleared.HasPrevious())
+	assert.Empty(t, cleared.PreviousTitle)
+	assert.Zero(t, cleared.PreviousScore)
+}
