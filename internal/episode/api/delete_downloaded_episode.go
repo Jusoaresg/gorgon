@@ -3,14 +3,12 @@ package api
 import (
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 
-	"github.com/jusoaresg/gorgon/config"
-	qbittorrentService "github.com/jusoaresg/gorgon/external/qbittorrent/service"
 	"github.com/jusoaresg/gorgon/internal/episode/events"
 	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
 	epContentModel "github.com/jusoaresg/gorgon/internal/episode_content/model"
-	"github.com/jusoaresg/gorgon/internal/paths"
 	"github.com/jusoaresg/gorgon/pkg/schemas"
 	"github.com/jusoaresg/gorgon/utils"
 
@@ -31,7 +29,7 @@ import (
 func (h *Handler) DeleteDownloadedEpisode(c echo.Context) error {
 	h.Logger.Info("Received request to Delete Downloaded Episode", slog.String("endpoint", "/database/show/episode/:id"), slog.String("method", "delete"))
 
-	cfg, err := config.LoadConfig()
+	cfg, err := h.loadConfig()
 	if err != nil {
 		schemas.SendError(c, 400, "Error while loading config file")
 		return err
@@ -66,23 +64,37 @@ func (h *Handler) DeleteDownloadedEpisode(c echo.Context) error {
 	}
 
 	episodeTorrent, _ := h.EpisodeTorrentRepo.GetByEpisodeID(ep.ID)
-	if episodeTorrent.Hash != "" {
-		torrentService, err := qbittorrentService.NewQBittorrentService(h.Logger)
-		if err == nil {
-			if err := torrentService.DeleteTorrent(episodeTorrent.Hash, true); err != nil {
-				h.Logger.Error("Failed to delete torrent from client", slog.String("hash", episodeTorrent.Hash), slog.String("error", err.Error()))
-			}
+	hashes := episodeTorrent.AllHashes()
+	if len(hashes) > 0 {
+		torrentService, err := h.newTorrentClient()
+		if err != nil {
+			h.Logger.Error("Failed to initialize torrent client for episode deletion",
+				slog.Int64("episode_id", ep.ID),
+				slog.Any("hashes", hashes),
+				slog.String("error", err.Error()),
+			)
+			schemas.SendError(c, 500, "Failed to connect to qBittorrent; episode was not deleted")
+			return err
+		}
+
+		if err := torrentService.DeleteTorrents(hashes, true); err != nil {
+			h.Logger.Error("Failed to delete torrent from client",
+				slog.Int64("episode_id", ep.ID),
+				slog.Any("hashes", hashes),
+				slog.String("error", err.Error()),
+			)
+			schemas.SendError(c, 500, "Failed to delete torrent from qBittorrent; episode was not deleted")
+			return err
 		}
 	}
 
-	downloadFolder, err := paths.GetTorrentDownloadFolder()
-	if err != nil {
-		return err
-	}
+	downloadFolder := filepath.Join(cfg.QBittorrentDownloadFolder)
 
 	for _, episodeContent := range episodeContents {
-		if _, err := utils.DeleteFile(downloadFolder, episodeContent.Name); err != nil && !os.IsNotExist(err) {
-			h.Logger.Error("Failed to delete downloaded episode", slog.String("error", err.Error()))
+		if downloadFolder != "" && episodeContent.Name != "" {
+			if _, err := utils.DeleteFile(downloadFolder, episodeContent.Name); err != nil && !os.IsNotExist(err) {
+				h.Logger.Error("Failed to delete downloaded episode", slog.String("error", err.Error()))
+			}
 		}
 
 		if err := utils.DeleteSymlink(cfg.ShowsFolder, show.Name, ep, episodeContent); err != nil {
@@ -104,7 +116,9 @@ func (h *Handler) DeleteDownloadedEpisode(c echo.Context) error {
 	ep.SetNotInstalled()
 	err = h.EpisodeRepo.Update(ep)
 	if err != nil {
-		h.Logger.Error("Failed to set episode to not intalled", slog.String("error", err.Error()))
+		h.Logger.Error("Failed to set episode to not installed", slog.String("error", err.Error()))
+		schemas.SendError(c, 500, "Failed to update episode status")
+		return err
 	}
 
 	episode.EmitEpisodeTrackingUpdatedEvent(ep.ID, episodeModel.TrackingSkipped, "")

@@ -24,7 +24,7 @@
                 hx-ext="json-enc-custom"
                 parse-types="true"
                 hx-swap="none"
-                hx-on::after-request="if (event.detail.successful) { closeModal(null); showToast(event); }"
+                hx-on::after-request="showToast(event); if (event.detail.successful) { closeModal(null); }"
             >
                 <div class="tracking-options">
                     <!-- Wanted Option -->
