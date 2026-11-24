@@ -2,12 +2,14 @@ package service
 
 import (
 	"log/slog"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/jusoaresg/gorgon/config"
 	"github.com/jusoaresg/gorgon/external/prowlarr/schema"
 	qbittorrentService "github.com/jusoaresg/gorgon/external/qbittorrent/service"
 	"github.com/jusoaresg/gorgon/internal/episode/model"
+	episodeTorrentRepository "github.com/jusoaresg/gorgon/internal/episode_torrent/repository"
 )
 
 type EpisodeDownloaderInterface interface {
@@ -61,7 +63,33 @@ func (d *EpisodeDownloader) DownloadEpisode(ep model.Episode, response schema.Se
 }
 
 func (d *EpisodeDownloader) DownloadEpisodeTorrent(ep model.Episode, response schema.SearchResponse, score ...int) error {
-	return d.DownloadEpisode(ep, response, score...)
+	logger := config.GetLogger()
+
+	torrentService, err := qbittorrentService.NewQBittorrentService(logger)
+	if err != nil {
+		return err
+	}
+
+	if err := torrentService.AddTorrent(response.Guid); err != nil {
+		logger.Error("failed to add manual torrent", slog.String("error", err.Error()))
+		return err
+	}
+
+	logger.Info("added manual torrent to torrent client", slog.String("title", response.Title))
+
+	s := 0
+	if len(score) > 0 {
+		s = score[0]
+	}
+
+	if err := SnatchEpisodeManual(&ep, response, s); err != nil {
+		if delErr := torrentService.DeleteTorrent(response.InfoHash, true); delErr != nil {
+			return delErr
+		}
+		return err
+	}
+
+	return nil
 }
 
 func (d *EpisodeDownloader) UpgradeEpisode(ep model.Episode, response schema.SearchResponse, newScore int, upgrade ...UpgradeInfo) error {
@@ -72,7 +100,19 @@ func (d *EpisodeDownloader) UpgradeEpisode(ep model.Episode, response schema.Sea
 		return err
 	}
 
-	// Add the candidate upgrade torrent into the client without deleting existing files
+	// If superseding an in-progress snatched torrent (not the downloaded one), record its hash
+	// so we can remove the superseded download once the new torrent is safely added.
+	var supersededSnatchedHash string
+	if ep.Tracking == model.TrackingSnatched {
+		if db := d.getDB(); db != nil {
+			epTorrentRepo := episodeTorrentRepository.NewEpisodeTorrentRepository(db)
+			if existing, err := epTorrentRepo.GetByEpisodeID(ep.ID); err == nil && existing.Hash != "" && !strings.EqualFold(existing.Hash, response.InfoHash) {
+				supersededSnatchedHash = existing.Hash
+			}
+		}
+	}
+
+	// Add the candidate upgrade torrent into the client without deleting existing downloaded files
 	if err := torrentService.AddTorrent(response.Guid); err != nil {
 		logger.Error("failed to add upgrade torrent to client", slog.String("error", err.Error()))
 		return err
@@ -95,6 +135,15 @@ func (d *EpisodeDownloader) UpgradeEpisode(ep model.Episode, response schema.Sea
 	if err := SnatchEpisodeWithUpgrade(&ep, response, newScore, upgPtr); err != nil {
 		_ = torrentService.DeleteTorrent(response.InfoHash, true)
 		return err
+	}
+
+	if supersededSnatchedHash != "" {
+		if err := torrentService.DeleteTorrent(supersededSnatchedHash, true); err != nil {
+			logger.Warn("failed to remove superseded snatched torrent from client",
+				slog.String("hash", supersededSnatchedHash),
+				slog.String("error", err.Error()),
+			)
+		}
 	}
 
 	return nil
