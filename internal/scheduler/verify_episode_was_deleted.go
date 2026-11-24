@@ -7,6 +7,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/jusoaresg/gorgon/config"
+	qbittorrentService "github.com/jusoaresg/gorgon/external/qbittorrent/service"
 	"github.com/jusoaresg/gorgon/internal/episode/model"
 	episodeRepositoy "github.com/jusoaresg/gorgon/internal/episode/repository"
 	epContentModel "github.com/jusoaresg/gorgon/internal/episode_content/model"
@@ -40,6 +41,19 @@ func VerifyEpisodeWasDeletedWithDB(db *sqlx.DB) {
 	}
 
 	episodeContentRepo := epContentRepository.NewEpisodeContentRepository(db)
+
+	var (
+		qbitClient     qbittorrentService.TorrentDeleter
+		qbitClientInit bool
+		qbitClientErr  error
+	)
+	getQbitClient := func() (qbittorrentService.TorrentDeleter, error) {
+		if !qbitClientInit {
+			qbitClientInit = true
+			qbitClient, qbitClientErr = qbittorrentService.NewQBittorrentService(logger)
+		}
+		return qbitClient, qbitClientErr
+	}
 
 	for _, episode := range episodes {
 		contents, err := episodeContentRepo.ListByEpisodeId(episode.ID)
@@ -85,6 +99,22 @@ func VerifyEpisodeWasDeletedWithDB(db *sqlx.DB) {
 			_, downloadStatErr := os.Stat(filePath)
 
 			if !destExists && os.IsNotExist(downloadStatErr) {
+				if epTorrent, torrErr := episodeTorrentRepo.GetByEpisodeID(episode.ID); torrErr == nil {
+					if hashes := epTorrent.AllHashes(); len(hashes) > 0 {
+						if qbit, qErr := getQbitClient(); qErr == nil && qbit != nil {
+							if delErr := qbit.DeleteTorrents(hashes, true); delErr != nil {
+								logger.Error(
+									"Failed to delete orphaned torrent from qBittorrent; will retry on next check",
+									slog.Int64("episode_id", episode.ID),
+									slog.Any("hashes", hashes),
+									slog.String("error", delErr.Error()),
+								)
+								continue
+							}
+						}
+					}
+				}
+
 				episode.SetNotInstalled()
 
 				err := episodeRepo.Update(episode)
