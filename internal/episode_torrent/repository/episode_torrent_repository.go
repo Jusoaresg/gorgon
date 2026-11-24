@@ -41,6 +41,11 @@ func (s *EpisodeTorrentRepository) Upsert(t model.EpisodeTorrent) (int64, error)
 		:created_at
 	)
 	ON CONFLICT(episode_id) DO UPDATE SET
+		previous_hash = CASE
+			WHEN episode_torrents.hash != '' AND LOWER(episode_torrents.hash) != LOWER(:hash)
+			THEN episode_torrents.hash
+			ELSE episode_torrents.previous_hash
+		END,
 		hash = :hash,
 		title = :title,
 		indexer = :indexer,
@@ -95,6 +100,11 @@ func (s *EpisodeTorrentRepository) UpsertTx(tx *sqlx.Tx, t model.EpisodeTorrent)
 		:created_at
 	)
 	ON CONFLICT(episode_id) DO UPDATE SET
+		previous_hash = CASE
+			WHEN episode_torrents.hash != '' AND LOWER(episode_torrents.hash) != LOWER(:hash)
+			THEN episode_torrents.hash
+			ELSE episode_torrents.previous_hash
+		END,
 		hash = :hash,
 		title = :title,
 		indexer = :indexer,
@@ -162,6 +172,14 @@ func (s *EpisodeTorrentRepository) ListByEpisodeIDs(episodeIDs []int64) ([]model
 	return torrents, nil
 }
 
+func (s *EpisodeTorrentRepository) ClearPreviousHash(episodeID int64) error {
+	_, err := s.db.Exec(
+		"UPDATE episode_torrents SET previous_hash = '' WHERE episode_id = ?",
+		episodeID,
+	)
+	return err
+}
+
 func (s *EpisodeTorrentRepository) UpdateStallState(episodeID int64, stalledSince, lastAmountLeft int64) error {
 	_, err := s.db.Exec(
 		"UPDATE episode_torrents SET stalled_since = ?, last_amount_left = ? WHERE episode_id = ?",
@@ -205,6 +223,7 @@ var _ EpisodeTorrentRepositoryInterface = (*EpisodeTorrentRepository)(nil)
 type EpisodeTorrentRepositoryInterface interface {
 	Upsert(t model.EpisodeTorrent) (int64, error)
 	UpsertTx(tx *sqlx.Tx, t model.EpisodeTorrent) (int64, error)
+	ClearPreviousHash(episodeID int64) error
 	UpdateStallState(episodeID int64, stalledSince, lastAmountLeft int64) error
 	GetByEpisodeID(episodeID int64) (model.EpisodeTorrent, error)
 	GetByHash(hash string) (model.EpisodeTorrent, error)

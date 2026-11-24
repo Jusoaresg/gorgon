@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jusoaresg/gorgon/config"
@@ -274,7 +275,7 @@ func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *servic
 	}
 	torrent := torrentResponse[0]
 
-	if torrent.Hash == episodeTorrent.Hash {
+	if strings.EqualFold(torrent.Hash, episodeTorrent.Hash) {
 		logger.Info(fmt.Sprintf("Episode S%02d E%02d %s found - Torrent: %s", ep.Season, ep.Number, ep.Name, torrent.Name))
 
 		safeDB.Write.Lock()
@@ -290,19 +291,41 @@ func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *servic
 		showRepo := showRepository.NewShowRepository(config.GetSQLite())
 		show, err := showRepo.GetById(ep.ShowID)
 
-		// Atomic cleanup of prior files/symlinks if this download is an upgrade
+		// Atomic cleanup of prior torrent/files/symlinks if this download is an upgrade
 		existingContents, _ := episodeContentRepo.ListByEpisodeId(ep.ID)
-		wasUpgrade := len(existingContents) > 0
-		downloadFolder, _ := paths.GetTorrentDownloadFolder()
+		wasUpgrade := len(existingContents) > 0 || (episodeTorrent.PreviousHash != "" && !strings.EqualFold(episodeTorrent.PreviousHash, episodeTorrent.Hash))
+
+		anySameFile := false
+		sameFileSet := make(map[string]bool)
 		for _, ec := range existingContents {
-			isSameFile := false
 			for _, newContent := range contents {
 				if newContent.Name == ec.Name {
-					isSameFile = true
+					sameFileSet[ec.Name] = true
+					anySameFile = true
 					break
 				}
 			}
-			if !isSameFile && downloadFolder != "" && ec.Name != "" {
+		}
+
+		if episodeTorrent.PreviousHash != "" && !strings.EqualFold(episodeTorrent.PreviousHash, episodeTorrent.Hash) {
+			deletePrevFiles := !anySameFile
+			if delErr := qbittorrentService.DeleteTorrent(episodeTorrent.PreviousHash, deletePrevFiles); delErr != nil {
+				logger.Error("failed to delete previous torrent from client after upgrade",
+					slog.Int64("episode_id", ep.ID),
+					slog.String("previous_hash", episodeTorrent.PreviousHash),
+					slog.String("error", delErr.Error()),
+				)
+			} else if clearErr := episodeTorrentRepo.ClearPreviousHash(ep.ID); clearErr != nil {
+				logger.Error("failed to clear previous torrent hash after upgrade",
+					slog.Int64("episode_id", ep.ID),
+					slog.String("error", clearErr.Error()),
+				)
+			}
+		}
+
+		downloadFolder, _ := paths.GetTorrentDownloadFolder()
+		for _, ec := range existingContents {
+			if !sameFileSet[ec.Name] && downloadFolder != "" && ec.Name != "" {
 				_, _ = utils.DeleteFile(downloadFolder, ec.Name)
 			}
 			if cfg != nil && show.Name != "" {
