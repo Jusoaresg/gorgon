@@ -13,6 +13,7 @@ import (
 	"github.com/jusoaresg/gorgon/config"
 	prowlarrSchema "github.com/jusoaresg/gorgon/external/prowlarr/schema"
 	blacklistRepository "github.com/jusoaresg/gorgon/internal/blacklist/repository"
+	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
 	episodeService "github.com/jusoaresg/gorgon/internal/episode/service"
 	filterService "github.com/jusoaresg/gorgon/internal/filter/service"
 	"github.com/jusoaresg/gorgon/pkg/schemas"
@@ -283,6 +284,38 @@ func (h *Handler) DownloadEpisodeTorrent(c echo.Context) error {
 	profile, _ := filterService.ResolveProfile(h.DB, settings)
 	ctx, _ := filterService.BuildContext(h.DB, show, ep.Season, ep.Number, settings)
 	manualScore := episodeService.CalculateScore(searchResponse, profile, ctx)
+
+	if ep.Tracking == episodeModel.TrackingDownloaded || ep.Tracking == episodeModel.TrackingSnatched {
+		existingTorrent, existingErr := h.EpisodeTorrentRepo.GetByEpisodeID(ep.ID)
+		if existingErr == nil && existingTorrent.Hash != "" && request.InfoHash != "" && strings.EqualFold(existingTorrent.Hash, request.InfoHash) {
+			if ep.Tracking == episodeModel.TrackingDownloaded {
+				schemas.SendError(c, 400, "This release is already downloaded")
+			} else {
+				schemas.SendError(c, 400, "This release is already being downloaded")
+			}
+			return nil
+		}
+
+		cutoff := 0
+		if profile != nil {
+			cutoff = profile.UpgradeUntilScore
+		}
+		upgradeInfo := episodeService.UpgradeInfo{
+			OldScore:       existingTorrent.Score,
+			NewScore:       manualScore,
+			CutoffScore:    cutoff,
+			OldReleaseName: existingTorrent.Title,
+			IsManual:       true,
+		}
+		if err := h.EpisodeSearchSvc.Downloader.UpgradeEpisode(ep, searchResponse, manualScore, upgradeInfo); err != nil {
+			logger.Error("failed to upgrade episode torrent manually", slog.Int64("episode_id", ep.ID), slog.String("error", err.Error()))
+			schemas.SendError(c, 500, "Failed to start upgrade: "+err.Error())
+			return nil
+		}
+
+		schemas.SendSuccess(c, "Upgrade started", nil)
+		return nil
+	}
 
 	if err := h.EpisodeSearchSvc.Downloader.DownloadEpisodeTorrent(ep, searchResponse, manualScore); err != nil {
 		logger.Error("failed to download episode torrent", slog.Int64("episode_id", ep.ID), slog.String("error", err.Error()))

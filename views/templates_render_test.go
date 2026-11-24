@@ -9,8 +9,11 @@ import (
 
 	"github.com/jusoaresg/gorgon/external/qbittorrent/schema"
 	"github.com/jusoaresg/gorgon/internal/downloads/service"
+	episodeModel "github.com/jusoaresg/gorgon/internal/episode/model"
+	episodeTorrentModel "github.com/jusoaresg/gorgon/internal/episode_torrent/model"
 	filterProfileModel "github.com/jusoaresg/gorgon/internal/filter_profile/model"
 	filterSettingsModel "github.com/jusoaresg/gorgon/internal/filter_settings/model"
+	seasonModel "github.com/jusoaresg/gorgon/internal/season/model"
 	showModel "github.com/jusoaresg/gorgon/internal/show/model"
 	showAliasModel "github.com/jusoaresg/gorgon/internal/show_aliases/model"
 	showSettingsModel "github.com/jusoaresg/gorgon/internal/show_settings/model"
@@ -711,5 +714,42 @@ func TestRenderLogEntriesPollingOnlyOnFirstPageOfCurrentFile(t *testing.T) {
 	})
 	if strings.Contains(oldFile, "hx-trigger") {
 		t.Error("non-current files should not include polling trigger")
+	}
+}
+
+func TestRenderShowSeasonContainer_DownloadedKeepsInteractiveSearch(t *testing.T) {
+	tmpl := NewTemplate()
+
+	data := struct {
+		Season   seasonModel.Season
+		Episodes []episodeModel.Episode
+		Torrents map[int64]episodeTorrentModel.EpisodeTorrent
+	}{
+		Season: seasonModel.Season{ID: 1, Number: 1},
+		Episodes: []episodeModel.Episode{
+			{ID: 10, Season: 1, Number: 1, Name: "Pilot", Tracking: episodeModel.TrackingDownloaded},
+		},
+		Torrents: map[int64]episodeTorrentModel.EpisodeTorrent{
+			10: {EpisodeId: 10, InfoUrl: "https://indexer.example/10"},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.templates.ExecuteTemplate(&buf, "show-season-container", data); err != nil {
+		t.Fatalf("failed to render show-season-container: %v", err)
+	}
+	out := buf.String()
+
+	// Automatic search stays hidden for downloaded episodes
+	if !strings.Contains(out, `id="automatic-search-10"`) || !strings.Contains(out, `style="display: none"`) {
+		t.Errorf("expected automatic search button to remain hidden for downloaded episode, got:\n%s", out)
+	}
+
+	// Interactive search button must remain visible (no js-search-actions class and no display: none)
+	if !strings.Contains(out, `class="btn-icon-sm btn-interactive"`) {
+		t.Errorf("expected interactive search button without js-search-actions class, got:\n%s", out)
+	}
+	if strings.Contains(out, `class="btn-icon-sm js-search-actions btn-interactive"`) {
+		t.Errorf("interactive search button must not have js-search-actions class")
 	}
 }

@@ -2,6 +2,7 @@ package service
 
 import (
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/jusoaresg/gorgon/config"
@@ -24,6 +25,7 @@ type UpgradeInfo struct {
 	NewScore       int
 	CutoffScore    int
 	OldReleaseName string
+	IsManual       bool
 }
 
 func SnatchEpisode(episode *model.Episode, response prowlarrSchema.SearchResponse, score ...int) error {
@@ -31,20 +33,41 @@ func SnatchEpisode(episode *model.Episode, response prowlarrSchema.SearchRespons
 	if len(score) > 0 {
 		s = score[0]
 	}
-	return SnatchEpisodeWithUpgrade(episode, response, s, nil)
+	return SnatchEpisodeWithOptions(episode, response, s, nil, false)
+}
+
+func SnatchEpisodeManual(episode *model.Episode, response prowlarrSchema.SearchResponse, score int) error {
+	return SnatchEpisodeWithOptions(episode, response, score, nil, true)
 }
 
 func SnatchEpisodeWithUpgrade(episode *model.Episode, response prowlarrSchema.SearchResponse, score int, upgrade *UpgradeInfo) error {
+	isManual := upgrade != nil && upgrade.IsManual
+	return SnatchEpisodeWithOptions(episode, response, score, upgrade, isManual)
+}
+
+func SnatchEpisodeWithOptions(episode *model.Episode, response prowlarrSchema.SearchResponse, score int, upgrade *UpgradeInfo, isManual bool) error {
 	logger := config.GetLogger()
 	safeDB := config.GetSafeDB()
 
 	episodeRepo := repository.NewEpisodeRepository(safeDB.Db)
 	episodeTorrentRepo := episodeTorrentRepository.NewEpisodeTorrentRepository(safeDB.Db)
 
+	prevTracking := episode.Tracking
 	episode.Tracking = model.TrackingSnatched
 	episodeTorrent := episodeTorrentModel.FromSearchResponse(episode.ID, response, score)
+	episodeTorrent.IsManual = isManual
 
 	err := concurrency.WithWriteLock(safeDB.Write, func() error {
+		if prevTracking == model.TrackingDownloaded || prevTracking == model.TrackingSnatched {
+			if existing, err := episodeTorrentRepo.GetByEpisodeID(episode.ID); err == nil {
+				if prevTracking == model.TrackingDownloaded && existing.Hash != "" && !strings.EqualFold(existing.Hash, response.InfoHash) {
+					episodeTorrent.SnapshotPreviousFrom(existing)
+				} else if prevTracking == model.TrackingSnatched && existing.HasPrevious() {
+					episodeTorrent.CopyPreviousFrom(existing)
+				}
+			}
+		}
+
 		if _, err := episodeTorrentRepo.Upsert(episodeTorrent); err != nil {
 			return err
 		}

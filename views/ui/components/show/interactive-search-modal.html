@@ -453,8 +453,10 @@
             btn.classList.remove('loading');
             btn.disabled = false;
             if (xhr.status === 200) {
+                var okMsg = 'Download started';
+                try { okMsg = JSON.parse(xhr.responseText).message || okMsg; } catch(e) {}
                 closeInteractiveSearch(null);
-                window.toast('Download started', 'success');
+                window.toast(okMsg, 'success');
             } else {
                 var msg = 'Failed to start download';
                 try { msg = JSON.parse(xhr.responseText).message || msg; } catch(e) {}
