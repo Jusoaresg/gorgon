@@ -313,21 +313,26 @@ func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *servic
 		showRepo := showRepository.NewShowRepository(config.GetSQLite())
 		show, err := showRepo.GetById(ep.ShowID)
 
-		// Atomic cleanup of prior files/symlinks if this download is an upgrade
+		// Atomic cleanup of prior torrent/files/symlinks if this download is an upgrade
 		existingContents, _ := episodeContentRepo.ListByEpisodeId(ep.ID)
-		wasUpgrade := len(existingContents) > 0 || episodeTorrent.HasPrevious()
-		hasSameFile := false
-		downloadFolder, _ := paths.GetTorrentDownloadFolder()
+		hasDistinctPrevious := episodeTorrent.HasPrevious() && !strings.EqualFold(episodeTorrent.PreviousHash, episodeTorrent.Hash)
+		wasUpgrade := len(existingContents) > 0 || hasDistinctPrevious
+
+		anySameFile := false
+		sameFileSet := make(map[string]bool)
 		for _, ec := range existingContents {
-			isSameFile := false
 			for _, newContent := range contents {
 				if newContent.Name == ec.Name {
-					isSameFile = true
-					hasSameFile = true
+					sameFileSet[ec.Name] = true
+					anySameFile = true
 					break
 				}
 			}
-			if !isSameFile && downloadFolder != "" && ec.Name != "" {
+		}
+
+		downloadFolder, _ := paths.GetTorrentDownloadFolder()
+		for _, ec := range existingContents {
+			if !sameFileSet[ec.Name] && downloadFolder != "" && ec.Name != "" {
 				_, _ = utils.DeleteFile(downloadFolder, ec.Name)
 			}
 			if cfg != nil && show.Name != "" {
@@ -348,7 +353,7 @@ func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *servic
 			tx.Rollback()
 			return err
 		}
-		if episodeTorrent.HasPrevious() {
+		if episodeTorrent.HasPrevious() && !hasDistinctPrevious {
 			if err := episodeTorrentRepo.ClearPreviousTx(tx, ep.ID); err != nil {
 				tx.Rollback()
 				return err
@@ -406,12 +411,17 @@ func ProcessSingleSnatchedDownload(ep *model.Episode, qbittorrentService *servic
 			return err
 		}
 
-		if episodeTorrent.HasPrevious() && !strings.EqualFold(episodeTorrent.PreviousHash, episodeTorrent.Hash) {
-			if err := qbittorrentService.DeleteTorrent(episodeTorrent.PreviousHash, !hasSameFile); err != nil {
-				logger.Warn("failed to remove previous upgraded torrent from client",
+		if hasDistinctPrevious {
+			if delErr := qbittorrentService.DeleteTorrent(episodeTorrent.PreviousHash, !anySameFile); delErr != nil {
+				logger.Error("failed to delete previous torrent from client after upgrade",
 					slog.Int64("episode_id", ep.ID),
 					slog.String("previous_hash", episodeTorrent.PreviousHash),
-					slog.String("error", err.Error()),
+					slog.String("error", delErr.Error()),
+				)
+			} else if clearErr := episodeTorrentRepo.ClearPrevious(ep.ID); clearErr != nil {
+				logger.Error("failed to clear previous torrent snapshot after upgrade",
+					slog.Int64("episode_id", ep.ID),
+					slog.String("error", clearErr.Error()),
 				)
 			}
 		}

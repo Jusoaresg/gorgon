@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strings"
 	"time"
 
 	prowlarrSchema "github.com/jusoaresg/gorgon/external/prowlarr/schema"
@@ -49,6 +50,26 @@ func (e *EpisodeTorrent) CopyPreviousFrom(prev EpisodeTorrent) {
 	e.PreviousInfoUrl = prev.PreviousInfoUrl
 	e.PreviousPublishDate = prev.PreviousPublishDate
 	e.PreviousScore = prev.PreviousScore
+}
+
+// AllHashes returns all non-empty, deduplicated torrent hashes associated with
+// this episode (current hash and any pending previous hash from an upgrade).
+func (t EpisodeTorrent) AllHashes() []string {
+	var hashes []string
+	seen := make(map[string]struct{}, 2)
+	for _, h := range []string{t.Hash, t.PreviousHash} {
+		trimmed := strings.TrimSpace(h)
+		if trimmed == "" {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		hashes = append(hashes, trimmed)
+	}
+	return hashes
 }
 
 func FromSearchResponse(episodeID int64, r prowlarrSchema.SearchResponse, score ...int) EpisodeTorrent {

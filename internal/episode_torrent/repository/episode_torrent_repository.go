@@ -55,6 +55,42 @@ func (s *EpisodeTorrentRepository) Upsert(t model.EpisodeTorrent) (int64, error)
 		:previous_score
 	)
 	ON CONFLICT(episode_id) DO UPDATE SET
+		previous_hash = CASE
+			WHEN :previous_hash != '' THEN :previous_hash
+			WHEN episode_torrents.hash != '' AND LOWER(episode_torrents.hash) != LOWER(:hash)
+			THEN episode_torrents.hash
+			ELSE episode_torrents.previous_hash
+		END,
+		previous_title = CASE
+			WHEN :previous_hash != '' THEN :previous_title
+			WHEN episode_torrents.hash != '' AND LOWER(episode_torrents.hash) != LOWER(:hash)
+			THEN episode_torrents.title
+			ELSE episode_torrents.previous_title
+		END,
+		previous_indexer = CASE
+			WHEN :previous_hash != '' THEN :previous_indexer
+			WHEN episode_torrents.hash != '' AND LOWER(episode_torrents.hash) != LOWER(:hash)
+			THEN episode_torrents.indexer
+			ELSE episode_torrents.previous_indexer
+		END,
+		previous_info_url = CASE
+			WHEN :previous_hash != '' THEN :previous_info_url
+			WHEN episode_torrents.hash != '' AND LOWER(episode_torrents.hash) != LOWER(:hash)
+			THEN episode_torrents.info_url
+			ELSE episode_torrents.previous_info_url
+		END,
+		previous_publish_date = CASE
+			WHEN :previous_hash != '' THEN :previous_publish_date
+			WHEN episode_torrents.hash != '' AND LOWER(episode_torrents.hash) != LOWER(:hash)
+			THEN episode_torrents.publish_date
+			ELSE episode_torrents.previous_publish_date
+		END,
+		previous_score = CASE
+			WHEN :previous_hash != '' THEN :previous_score
+			WHEN episode_torrents.hash != '' AND LOWER(episode_torrents.hash) != LOWER(:hash)
+			THEN episode_torrents.score
+			ELSE episode_torrents.previous_score
+		END,
 		hash = :hash,
 		title = :title,
 		indexer = :indexer,
@@ -64,13 +100,7 @@ func (s *EpisodeTorrentRepository) Upsert(t model.EpisodeTorrent) (int64, error)
 		created_at = :created_at,
 		stalled_since = 0,
 		last_amount_left = -1,
-		is_manual = :is_manual,
-		previous_hash = :previous_hash,
-		previous_title = :previous_title,
-		previous_indexer = :previous_indexer,
-		previous_info_url = :previous_info_url,
-		previous_publish_date = :previous_publish_date,
-		previous_score = :previous_score
+		is_manual = :is_manual
 	`
 	result, err := s.db.NamedExec(query, t)
 	if err != nil {
@@ -130,6 +160,42 @@ func (s *EpisodeTorrentRepository) UpsertTx(tx *sqlx.Tx, t model.EpisodeTorrent)
 		:previous_score
 	)
 	ON CONFLICT(episode_id) DO UPDATE SET
+		previous_hash = CASE
+			WHEN :previous_hash != '' THEN :previous_hash
+			WHEN episode_torrents.hash != '' AND LOWER(episode_torrents.hash) != LOWER(:hash)
+			THEN episode_torrents.hash
+			ELSE episode_torrents.previous_hash
+		END,
+		previous_title = CASE
+			WHEN :previous_hash != '' THEN :previous_title
+			WHEN episode_torrents.hash != '' AND LOWER(episode_torrents.hash) != LOWER(:hash)
+			THEN episode_torrents.title
+			ELSE episode_torrents.previous_title
+		END,
+		previous_indexer = CASE
+			WHEN :previous_hash != '' THEN :previous_indexer
+			WHEN episode_torrents.hash != '' AND LOWER(episode_torrents.hash) != LOWER(:hash)
+			THEN episode_torrents.indexer
+			ELSE episode_torrents.previous_indexer
+		END,
+		previous_info_url = CASE
+			WHEN :previous_hash != '' THEN :previous_info_url
+			WHEN episode_torrents.hash != '' AND LOWER(episode_torrents.hash) != LOWER(:hash)
+			THEN episode_torrents.info_url
+			ELSE episode_torrents.previous_info_url
+		END,
+		previous_publish_date = CASE
+			WHEN :previous_hash != '' THEN :previous_publish_date
+			WHEN episode_torrents.hash != '' AND LOWER(episode_torrents.hash) != LOWER(:hash)
+			THEN episode_torrents.publish_date
+			ELSE episode_torrents.previous_publish_date
+		END,
+		previous_score = CASE
+			WHEN :previous_hash != '' THEN :previous_score
+			WHEN episode_torrents.hash != '' AND LOWER(episode_torrents.hash) != LOWER(:hash)
+			THEN episode_torrents.score
+			ELSE episode_torrents.previous_score
+		END,
 		hash = :hash,
 		title = :title,
 		indexer = :indexer,
@@ -139,13 +205,7 @@ func (s *EpisodeTorrentRepository) UpsertTx(tx *sqlx.Tx, t model.EpisodeTorrent)
 		created_at = :created_at,
 		stalled_since = 0,
 		last_amount_left = -1,
-		is_manual = :is_manual,
-		previous_hash = :previous_hash,
-		previous_title = :previous_title,
-		previous_indexer = :previous_indexer,
-		previous_info_url = :previous_info_url,
-		previous_publish_date = :previous_publish_date,
-		previous_score = :previous_score
+		is_manual = :is_manual
 	`
 	result, err := tx.NamedExec(query, t)
 	if err != nil {
@@ -202,6 +262,10 @@ func (s *EpisodeTorrentRepository) ListByEpisodeIDs(episodeIDs []int64) ([]model
 	}
 
 	return torrents, nil
+}
+
+func (s *EpisodeTorrentRepository) ClearPreviousHash(episodeID int64) error {
+	return s.ClearPrevious(episodeID)
 }
 
 func (s *EpisodeTorrentRepository) UpdateStallState(episodeID int64, stalledSince, lastAmountLeft int64) error {
@@ -301,6 +365,7 @@ var _ EpisodeTorrentRepositoryInterface = (*EpisodeTorrentRepository)(nil)
 type EpisodeTorrentRepositoryInterface interface {
 	Upsert(t model.EpisodeTorrent) (int64, error)
 	UpsertTx(tx *sqlx.Tx, t model.EpisodeTorrent) (int64, error)
+	ClearPreviousHash(episodeID int64) error
 	UpdateStallState(episodeID int64, stalledSince, lastAmountLeft int64) error
 	ClearPrevious(episodeID int64) error
 	ClearPreviousTx(tx *sqlx.Tx, episodeID int64) error

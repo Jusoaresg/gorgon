@@ -224,3 +224,41 @@ func TestEpisodeTorrentRepository_PreviousSnapshot_RestoreAndClear(t *testing.T)
 	assert.Empty(t, cleared.PreviousTitle)
 	assert.Zero(t, cleared.PreviousScore)
 }
+
+func TestEpisodeTorrentRepository_Upsert_PreservesPreviousHashAndClear(t *testing.T) {
+	db, repo := getEpTorrentRepo()
+
+	torrent := MakeEpisodeTorrentWithDeps(db)
+	originalHash := torrent.Hash
+	_, err := repo.Upsert(torrent)
+	assert.NoError(t, err)
+
+	// Upserting with a new hash (upgrade) must preserve originalHash in PreviousHash
+	torrent.Hash = "newhash12345"
+	_, err = repo.Upsert(torrent)
+	assert.NoError(t, err)
+
+	updated, err := repo.GetByEpisodeID(torrent.EpisodeId)
+	assert.NoError(t, err)
+	assert.Equal(t, "newhash12345", updated.Hash)
+	assert.Equal(t, originalHash, updated.PreviousHash)
+	assert.Equal(t, []string{"newhash12345", originalHash}, updated.AllHashes())
+
+	// Upserting with the same hash (case-insensitive) must NOT overwrite PreviousHash
+	torrent.Hash = "NEWHASH12345"
+	_, err = repo.Upsert(torrent)
+	assert.NoError(t, err)
+
+	sameHashResult, err := repo.GetByEpisodeID(torrent.EpisodeId)
+	assert.NoError(t, err)
+	assert.Equal(t, originalHash, sameHashResult.PreviousHash)
+
+	// ClearPreviousHash must reset PreviousHash to empty
+	err = repo.ClearPreviousHash(torrent.EpisodeId)
+	assert.NoError(t, err)
+
+	cleared, err := repo.GetByEpisodeID(torrent.EpisodeId)
+	assert.NoError(t, err)
+	assert.Equal(t, "", cleared.PreviousHash)
+	assert.Equal(t, []string{"NEWHASH12345"}, cleared.AllHashes())
+}
